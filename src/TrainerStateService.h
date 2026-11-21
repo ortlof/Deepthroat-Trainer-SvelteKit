@@ -82,6 +82,14 @@ public:
     /* Rep mode */
     uint8_t playMode = 0;   /* 0 = hold the goal, 1 = count reps */
     uint16_t repCount = 0;  /* reps completed in this session */
+
+    /* A panel effect: 0 none, 1 a rep counted, 2 the set is finished. The trainer task
+     * starts them; a client may start one too, which is how the animation is tested
+     * without doing a rep. The start time is always set on the device. */
+    uint8_t fx = 0;
+    uint32_t fxStartMs = 0;
+    uint16_t fxCount = 0;
+    char fxText[24] = "";
     uint16_t repTarget = 0; /* 0 = count up, N = count down from N */
     bool repArmed = true;   /* the depth is back at the start: the next rep counts */
 
@@ -213,7 +221,13 @@ public:
         goalLevel = constrain(goalLevel, 0, 3);
         const bool displayOn = root["display_on"] | state.displayOn;
 
-        if (sessionStart == state.sessionStart && sessionStop == state.sessionStop &&
+        /* A panel effect is always taken as a change, so the same animation can be
+         * started twice in a row. The client only names the effect and its number; the
+         * device stamps the start time, so a client cannot leave the panel stuck. */
+        const bool effectRequested = root.containsKey("fx");
+
+        if (!effectRequested &&
+            sessionStart == state.sessionStart && sessionStop == state.sessionStop &&
             zero == state.zero && resetPeak == state.resetPeak &&
             goalLevel == state.goalLevel && displayOn == state.displayOn)
         {
@@ -226,6 +240,16 @@ public:
         state.resetPeak = resetPeak;
         state.goalLevel = goalLevel;
         state.displayOn = displayOn;
+
+        if (effectRequested)
+        {
+            state.fx = (uint8_t)constrain((int)(root["fx"] | 0), 0, 2);
+            state.fxStartMs = millis();
+            state.fxCount = (uint16_t)constrain((int)(root["fx_count"] | (int)state.fxCount), 0, 9999);
+            const char *text = root["fx_text"];
+            snprintf(state.fxText, sizeof(state.fxText), "%s", (text != nullptr) ? text : "");
+        }
+
         return StateUpdateResult::CHANGED;
     }
 };

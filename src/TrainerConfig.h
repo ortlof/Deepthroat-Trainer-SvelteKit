@@ -173,3 +173,11 @@
 /* The first radio report waits this much longer when the device is not connected, so
  * its scan cannot collide with the framework's own join attempts. */
 #define TRAINER_WIFI_REPORT_GRACE_MS 45000
+
+/* Panel effects. The trainer task starts one, the display task runs it to the end of
+ * its duration, so an animation can never get stuck on with a client that is gone. */
+#define TRAINER_REP_FX_MS 2600     /* a rep counted: the count, and the way back out */
+#define TRAINER_PRAISE_FX_MS 8000  /* the set is finished: the praise animation */
+#define TRAINER_FX_RINGS 3         /* rings in the burst around the middle */
+#define TRAINER_FX_BURST_RADIUS 205
+#define TRAINER_FX_TEXT_WIDTH 430  /* the widest the words may be at the larger size */

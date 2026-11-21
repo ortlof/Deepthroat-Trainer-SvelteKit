@@ -52,6 +52,14 @@ struct TrainerScreen
     uint16_t repCount = 0;
     uint16_t repTarget = 0; /* 0 = count up */
 
+    /* A panel animation in flight: 0 none, 1 a rep counted, 2 the set is finished. The
+     * start time is the device clock, so the display ends it by itself and the normal
+     * layout returns - even if the client that asked for it is long gone. */
+    uint8_t fx = 0;
+    uint32_t fxStartMs = 0;
+    uint16_t fxCount = 0;
+    char fxText[24] = "";
+
     bool sensorOk = false;
     bool batteryKnown = false;
     float batteryV = 0.0f;
@@ -101,6 +109,10 @@ private:
     void drawBattery(bool known, float volts);
     void drawFooter(const TrainerScreen &screen);
 
+    /* A full-panel animation: a rep counted, or a finished set. The trainer task starts
+     * it and it ends by itself after its duration, so the normal layout always returns. */
+    void drawEffect(const TrainerScreen &screen, uint32_t nowMs, float progress);
+
     void eraseBox(int16_t cx, int16_t cy, int16_t halfWidth, int16_t halfHeight);
     void drawCentered(const GFXfont *font, uint8_t scale, int16_t cx, int16_t cy, const char *text, uint16_t color);
     static int16_t textWidth(const GFXfont *font, const char *text, uint8_t scale);
@@ -135,4 +147,5 @@ private:
     float _lastHoldProgress = -1.0f;
     bool _lastSessionActive = false;
     int8_t _batteryBucket = -2; /* -2 = nothing drawn, -1 = battery unknown */
+    bool _fxDrawn = false;      /* an animation took the panel: it has to be repainted */
 };

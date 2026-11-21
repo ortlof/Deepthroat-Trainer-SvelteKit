@@ -492,6 +492,65 @@ void TrainerDisplay::drawFooter(const TrainerScreen &screen)
                  screen.sensorOk ? COL_DIM : COL_WARN);
 }
 
+/* The big animations. They take the whole panel, because the point of them is that
+ * they are impossible to miss: a rep that just counted with the way back out, and the
+ * praise when the set is finished. The trainer task starts them; the timing comes from
+ * trainer_math.h, so the host tests cover when they start and when they end. */
+void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, float progress)
+{
+    const bool praise = (screen.fx == 2);
+    const uint16_t accent = praise ? COL_DONE : COL_ACCENT;
+
+    _gfx->fillScreen(COL_BG);
+
+    /* The burst: rings leaving the middle one after another. */
+    for (uint8_t i = 0; i < TRAINER_FX_RINGS; i++)
+    {
+        const int16_t radius = trainer::fxRingRadius(i, progress, TRAINER_FX_BURST_RADIUS);
+        if (radius < 10)
+        {
+            continue;
+        }
+        _gfx->drawCircle(CX, CY, radius, ((i & 1u) == 0u) ? accent : COL_TRACK);
+        _gfx->drawCircle(CX, CY, radius - 1, ((i & 1u) == 0u) ? accent : COL_TRACK);
+    }
+
+    /* The words have to fit across the panel: at twice the size a long praise line
+     * would run over the edge, so the size steps down for anything wide. */
+    char big[24];
+    if (praise)
+    {
+        const char *text = (screen.fxText[0] != '\0') ? screen.fxText : "GOOD";
+        snprintf(big, sizeof(big), "%s", text);
+    }
+    else
+    {
+        snprintf(big, sizeof(big), "REP %u", (unsigned)screen.fxCount);
+    }
+    const uint8_t scale = (textWidth(&FreeSansBold24pt7b, big, 2) <= TRAINER_FX_TEXT_WIDTH) ? 2 : 1;
+
+    if (praise)
+    {
+        /* The words the set earned. They pulse, so the panel keeps moving while they
+         * are on it. */
+        const uint16_t color = trainer::fxPulseOn(nowMs, 480) ? accent : COL_TEXT;
+        drawCentered(&FreeSansBold24pt7b, scale, CX, CY - 40, big, color);
+
+        char line[32];
+        snprintf(line, sizeof(line), "%u reps done", (unsigned)screen.fxCount);
+        drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 50, line, COL_TEXT);
+        drawCentered(&FreeSans9pt7b, 1, CX, CY + 90, "tap to start again", COL_DIM);
+    }
+    else
+    {
+        drawCentered(&FreeSansBold24pt7b, scale, CX, CY - 50, big, COL_DONE);
+
+        /* The instruction that matters for the next rep. */
+        drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 30, "back out fully", COL_TEXT);
+        drawCentered(&FreeSans9pt7b, 1, CX, CY + 70, "then go again", COL_DIM);
+    }
+}
+
 void TrainerDisplay::render(const TrainerScreen &screen)
 {
     if (!_present)
@@ -501,6 +560,29 @@ void TrainerDisplay::render(const TrainerScreen &screen)
 
     if (!_valid)
     {
+        drawStatic();
+        _valid = true;
+    }
+
+    /* An animation owns the whole panel while it runs. It ends on its own clock, and
+     * when it does, the static frame and every text box are drawn again from scratch:
+     * the panel is full of the animation, so nothing may be left cached. */
+    const uint32_t now = millis();
+    const uint32_t duration = (screen.fx == 2) ? TRAINER_PRAISE_FX_MS : TRAINER_REP_FX_MS;
+    if ((screen.fx == 1 || screen.fx == 2) && trainer::fxActive(now, screen.fxStartMs, duration))
+    {
+        drawEffect(screen, now, trainer::fxProgress(now, screen.fxStartMs, duration));
+        _fxDrawn = true;
+        _valid = false;
+        _gfx->flush();
+        _frames++;
+        return;
+    }
+
+    if (_fxDrawn)
+    {
+        _fxDrawn = false;
+        _valid = false;
         drawStatic();
         _valid = true;
     }

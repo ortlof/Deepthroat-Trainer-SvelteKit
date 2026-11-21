@@ -49,6 +49,7 @@ public:
     /* --- play --- */
     uint8_t play_mode = 0;         /* 0 = hold the goal, 1 = count reps */
     uint16_t reps_target = 0;      /* reps: 0 = count up, N = count down from N */
+    char praise[24] = "GOOD THING"; /* shown on the panel when a set is finished */
 
     /* --- behaviour --- */
     float filter_tau_s = 0.20f;    /* sensor smoothing; 0 = raw */
@@ -72,6 +73,7 @@ public:
         root["auto_advance"] = settings.auto_advance;
         root["play_mode"] = settings.play_mode;
         root["reps_target"] = settings.reps_target;
+        root["praise"] = settings.praise;
         root["filter_tau_s"] = settings.filter_tau_s;
         root["session_stop_s"] = settings.session_stop_s;
         root["units"] = settings.units;
@@ -115,6 +117,18 @@ public:
         int repsTarget = root["reps_target"] | (int)settings.reps_target;
         repsTarget = constrain(repsTarget, 0, 500);
 
+        /* The words the panel shows when a set is finished. Twelve characters is what
+         * the panel holds at that size, so a longer value is cut rather than refused. */
+        const char *praiseSource = root["praise"];
+        char praise[sizeof(settings.praise)];
+        snprintf(praise, sizeof(praise), "%s", (praiseSource != nullptr) ? praiseSource : settings.praise);
+        /* Upper case on the device, so the panel reads as written by the panel and not
+         * as whatever the keyboard produced. */
+        for (char *p = praise; *p != '\0'; p++)
+        {
+            *p = (char)toupper((unsigned char)*p);
+        }
+
         float tau = root["filter_tau_s"] | settings.filter_tau_s;
         tau = constrain(tau, 0.0f, 2.0f);
 
@@ -140,7 +154,8 @@ public:
             playMode == (int)settings.play_mode && repsTarget == (int)settings.reps_target &&
             tau == settings.filter_tau_s && stop == settings.session_stop_s &&
             units == (int)settings.units && brightness == (int)settings.display_brightness &&
-            dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s)
+            dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s &&
+            strcmp(praise, settings.praise) == 0)
         {
             return StateUpdateResult::UNCHANGED;
         }
@@ -161,6 +176,7 @@ public:
         settings.display_brightness = (uint8_t)brightness;
         settings.dim_brightness = (uint8_t)dim;
         settings.display_timeout_s = (uint16_t)timeout;
+        snprintf(settings.praise, sizeof(settings.praise), "%s", praise);
         return StateUpdateResult::CHANGED;
     }
 };

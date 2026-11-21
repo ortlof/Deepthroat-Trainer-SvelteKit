@@ -716,6 +716,22 @@ static void applyTrainerStateToSession(const String &originId)
 
 /* -------------------------------------------------------------- snapshot ---- */
 
+/* Start a panel animation. The trainer task calls this when a rep counts and when the
+ * set is finished; a client can call it through the state endpoint too, which is how the
+ * animation is checked without doing a rep. Only the kind, the number and the words are
+ * passed in: the start time comes from the device clock. */
+static void startPanelEffect(uint8_t kind, uint16_t count, const char *text)
+{
+    trainerStateService.update([&](TrainerState &state)
+                               {
+        state.fx = kind;
+        state.fxStartMs = millis();
+        state.fxCount = count;
+        snprintf(state.fxText, sizeof(state.fxText), "%s", (text != nullptr) ? text : "");
+        return StateUpdateResult::CHANGED; },
+                               TRAINER_DEVICE_ORIGIN);
+}
+
 static void buildSnapshot()
 {
     TrainerScreen screen;
@@ -746,6 +762,17 @@ static void buildSnapshot()
     screen.repMode = playModeReps();
     screen.repCount = repCounter.count;
     screen.repTarget = cfg().reps_target;
+
+    /* A panel animation in flight. Its start time lives in the state, so it survives
+     * this snapshot being rebuilt ten times a second and ends on its own clock. */
+    trainerStateService.read([&screen](TrainerState &state)
+                             {
+        screen.fx = state.fx;
+        screen.fxStartMs = state.fxStartMs;
+        screen.fxCount = state.fxCount;
+        strncpy(screen.fxText, state.fxText, sizeof(screen.fxText) - 1);
+        screen.fxText[sizeof(screen.fxText) - 1] = '\0';
+    });
 
     /* The footer is one short line; the panel has room for about 28 characters
      * at this size. The signal strength earns its place there: a weak link is the
@@ -1046,12 +1073,20 @@ void trainerTask(void *pvParameters)
                             setNotice(buffer);
                             esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
 
+                            /* The big one on the panel: the count, and the reminder to
+                             * come all the way back out before the next rep. */
+                            startPanelEffect(1, repCounter.count, nullptr);
+
                             if (repCounter.targetReached)
                             {
-                                snprintf(buffer, sizeof(buffer), "set done - %u reps", (unsigned)repCounter.count);
+                                const uint16_t done = repCounter.count;
+                                snprintf(buffer, sizeof(buffer), "set done - %u reps", (unsigned)done);
                                 setNotice(buffer);
                                 esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
                                 stopSession();
+                                /* The praise takes the panel after the session has been
+                                 * closed, so the count is read before that. */
+                                startPanelEffect(2, done, cfg().praise);
                             }
                         }
                         holdCounted = false;

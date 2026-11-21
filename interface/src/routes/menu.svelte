@@ -20,6 +20,7 @@
 	import Bug from '~icons/tabler/bug';
 	import PlugConnected from '~icons/tabler/plug-connected';
 	import Engine from '~icons/tabler/target-arrow';
+	import Ruler from '~icons/tabler/ruler-measure';
 	import { page } from '$app/state';
 	import { user } from '$lib/stores/user';
 
@@ -51,6 +52,12 @@
 			title: 'Trainer',
 			icon: Engine,
 			href: '/trainer',
+			feature: true
+		},
+		{
+			title: 'Setup',
+			icon: Ruler,
+			href: '/setup',
 			feature: true
 		},
 		{

@@ -342,4 +342,61 @@ private:
     bool _active = false;
 };
 
+/* ------------------------------------------------------------- panel effects ---- */
+
+/* The big animations on the panel run from a start time to a duration, on the device.
+ * That way they cannot get stuck when the page that asked for one is closed, and the
+ * timing can be tested on a PC. A start time of 0 means "nothing running". */
+
+inline bool fxActive(uint32_t nowMs, uint32_t startMs, uint32_t durationMs)
+{
+    if (startMs == 0 || durationMs == 0)
+    {
+        return false;
+    }
+    return (nowMs - startMs) < durationMs;
+}
+
+inline float fxProgress(uint32_t nowMs, uint32_t startMs, uint32_t durationMs)
+{
+    if (durationMs == 0)
+    {
+        return 1.0f;
+    }
+    const uint32_t elapsed = (nowMs >= startMs) ? (nowMs - startMs) : 0u;
+    if (elapsed >= durationMs)
+    {
+        return 1.0f;
+    }
+    return (float)elapsed / (float)durationMs;
+}
+
+/* One ring of the burst: it leaves the middle at its own moment and reaches the rim
+ * at the end of its own span, then stays there. The stagger is what makes the burst
+ * read as movement rather than as one growing circle. */
+inline float fxRingGauge(uint8_t index, float progress)
+{
+    /* Three rings, each a little later than the one before, and the last one still
+     * reaches the rim inside the animation: 0.15 + 3 * 0.15 + 0.55 = 1.00. */
+    const float ringOffset = 0.15f;
+    const float ringSpan = 0.55f;
+    float t = (progress - ringOffset * (float)index) / ringSpan;
+    return (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+}
+
+inline int16_t fxRingRadius(uint8_t index, float progress, int16_t outRadius)
+{
+    return (int16_t)lroundf(fxRingGauge(index, progress) * (float)outRadius);
+}
+
+/* A pulse, so an animation that has settled still looks alive. */
+inline bool fxPulseOn(uint32_t nowMs, uint32_t periodMs)
+{
+    if (periodMs == 0)
+    {
+        return true;
+    }
+    return ((nowMs / periodMs) & 1u) != 0u;
+}
+
 } /* namespace trainer */

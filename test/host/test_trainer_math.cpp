@@ -198,6 +198,47 @@ int main()
     expectTrue("nan is not usable", !rangeIsUsable(std::nanf("")));
     expectTrue("255 mm is out of range", !rangeIsUsable(255.0f));
 
+    /* ---- panel effects --------------------------------------------------- */
+    {
+        expectTrue("no effect before one is started", !fxActive(1000, 0, 2600));
+        expectTrue("an effect runs at its start", fxActive(1000, 1000, 2600));
+        expectTrue("an effect runs in its middle", fxActive(2000, 1000, 2600));
+        expectTrue("an effect stops at its end", !fxActive(3600, 1000, 2600));
+        expectTrue("an effect stops after its end", !fxActive(9000, 1000, 2600));
+        expectTrue("a zero duration never runs", !fxActive(1000, 1000, 0));
+
+        expectNear("progress starts at zero", fxProgress(1000, 1000, 2000), 0.0f, 0.001f);
+        expectNear("progress is half way at half time", fxProgress(2000, 1000, 2000), 0.5f, 0.001f);
+        expectNear("progress is full at the end", fxProgress(3000, 1000, 2000), 1.0f, 0.001f);
+        expectNear("progress is clamped past the end", fxProgress(90000, 1000, 2000), 1.0f, 0.001f);
+
+        /* The burst: the first ring leaves the middle at once, the later ones wait their
+         * turn, and no ring ever shrinks - that is what makes it read as a burst. */
+        expectNear("ring 0 starts at the middle", (float)fxRingRadius(0, 0.0f, 200), 0.0f, 0.5f);
+        expectNear("ring 0 reaches the rim", (float)fxRingRadius(0, 0.6f, 200), 200.0f, 0.5f);
+        expectNear("ring 1 waits its turn", (float)fxRingRadius(1, 0.0f, 200), 0.0f, 0.5f);
+        expectTrue("ring 2 is still inside when ring 0 is out",
+                   fxRingRadius(2, 0.6f, 200) < fxRingRadius(0, 0.6f, 200));
+        expectNear("ring 2 reaches the rim by the end", (float)fxRingRadius(2, 1.0f, 200), 200.0f, 0.5f);
+        expectNear("ring 3 is the rim at the end too", (float)fxRingRadius(3, 1.0f, 200), 200.0f, 0.5f);
+        for (float p = 0.0f; p <= 1.0f; p += 0.05f)
+        {
+            bool monotonic = true;
+            for (uint8_t ring = 0; ring < 4; ring++)
+            {
+                if (fxRingRadius(ring, p + 0.05f, 200) < fxRingRadius(ring, p, 200))
+                {
+                    monotonic = false;
+                }
+            }
+            expectTrue("a ring never shrinks", monotonic);
+        }
+
+        expectTrue("the pulse is off in the first period", !fxPulseOn(100, 480));
+        expectTrue("the pulse is on in the second one", fxPulseOn(600, 480));
+        expectTrue("a zero period stays on", fxPulseOn(1234, 0));
+    }
+
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);
     return failures == 0 ? 0 : 1;
 }
