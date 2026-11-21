@@ -27,6 +27,7 @@ the device in access point mode on the first start).
 - [Wiring](#wiring)
 - [First flash: the web flasher](#first-flash-the-web-flasher)
 - [Every flash after that: the network](#every-flash-after-that-the-network)
+- [WiFi range](#wifi-range)
 - [Build from source](#build-from-source)
 - [Using it](#using-it)
 - [Calibration](#calibration)
@@ -167,6 +168,77 @@ The image must fit the free application slot, otherwise the device refuses it.
 If a flash or an update *erases* the settings, the device comes up in access point
 mode again and is only reachable at <http://192.168.4.1>. That is expected, not a
 fault.
+
+## WiFi range
+
+The radio of this board is its weakest part: a small printed antenna on a 480x480
+display board. Software cannot put an antenna back, but four settings decide how
+much of the link budget is used, and this firmware sets all four:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Country code | `DE` (change with `-D TRAINER_WIFI_COUNTRY=".."`) | An ESP32 without one runs as country `01`, the worldwide safe set, which holds the lowest common denominator of every regulation: less power, fewer channels |
+| Transmit power | 19.5 dBm, the radio's ceiling | Stated explicitly, so no default can leave it lower |
+| Channel width | HT20 | HT40 doubles the occupied spectrum for throughput; this device sends a few hundred bytes at a time, so the link margin is worth more |
+| Modem sleep | off | The radio wakes on every beacon instead of on the access point's DTIM, which is a much shorter round trip at the edge of a network |
+
+The framework's join logic also ignores every network weaker than
+`FACTORY_WIFI_RSSI_THRESHOLD`. That value is **-90 dBm here** instead of the
+upstream -80: at -80 a network that a laptop calls "two bars" is simply not in the
+candidate list, and the device falls back to its own access point instead of
+joining.
+
+### Read the numbers, do not guess
+
+Twelve seconds after boot the firmware writes one line to the serial port. When
+the device is connected:
+
+```
+[wifi] country DE ok, tx power 19.5 dBm ok, HT20 ok
+[wifi] connected to "homie-2.4", -63 dBm, channel 6, IP 192.168.1.50
+```
+
+When it is not, it scans and lists what the radio can hear at all:
+
+```
+[wifi] not connected. 7 network(s) in range:
+[wifi]    -51 dBm  channel  1  FritzBox7590
+[wifi]    -68 dBm  channel 11  homie-2.4
+[wifi]    -88 dBm  channel  6  Nachbar-WLAN
+```
+
+| Signal | Meaning |
+| --- | --- |
+| -50 dBm and better | excellent, anything works |
+| -60 to -70 dBm | good, a solid link |
+| -70 to -80 dBm | usable, occasional reconnects |
+| -80 to -90 dBm | marginal: JSON goes through, the UI feels slow, expect drops |
+| below -90 dBm | not a network any more |
+
+The same number is in the panel footer next to the IP address, and in the web UI
+status bar.
+
+### What the scan tells you
+
+- **The home network does not appear at all.** The ESP32 has **no 5 GHz radio**.
+  A 5 GHz-only SSID is invisible to it, and no firmware can change that. Join the
+  2.4 GHz SSID of the router (most have both), or enable 2.4 GHz.
+- **It appears at -85 dBm or worse.** That is distance and walls, not firmware.
+  Move the device, or put a cheap 2.4 GHz repeater between the router and the
+  trainer. A repeater fixed exactly this symptom on other LilyGo S3 boards.
+- **It appears at a good level but the join fails.** Check the password and the
+  security mode (WPA2-PSK, or WPA2/WPA3 mixed — the safe choices for an ESP32), and
+  that the router does not block new clients or use a hidden SSID.
+- **Only channels 12 and 13 are usable nearby.** Set the country code to your
+  country so the radio may transmit there.
+
+Metal, a large water surface and the far side of a wall all cost more than any
+setting in this table. The signal strength in the footer is the honest measure of
+what is left.
+
+One behaviour of this board family is worth knowing and is not a fault: while the
+firmware is written to flash the picture can shift or freeze for a moment, because
+the panel reads its picture out of PSRAM and a flash erase stops that memory.
 
 ## Build from source
 

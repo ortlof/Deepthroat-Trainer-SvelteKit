@@ -21,6 +21,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 
 #include <ESP32SvelteKit.h>
 #include <NotificationService.h>
@@ -51,6 +52,11 @@
 
 /* How long a notice stays on the state object. */
 #define NOTICE_TIMEOUT_MS 12000
+
+/* Set from the WiFi event task when the station came up, so the radio settings
+ * are re-applied from this project's own task and not from inside a callback. */
+static volatile bool radioReapplyRequested = false;
+static volatile bool radioReportDone = false;
 
 PsychicHttpServer server;
 ESP32SvelteKit esp32sveltekit(&server, NUMBER_OF_ENDPOINTS);
@@ -125,6 +131,8 @@ static void buildSnapshot();
 static void publishState();
 static float readBatteryVolts();
 static void handleTouch();
+static void applyRadioSettings();
+static void logRadioStatus();
 void trainerTask(void *pvParameters);
 void displayTask(void *pvParameters);
 
@@ -166,6 +174,76 @@ static float readBatteryVolts()
      * nothing; the UI says so. */
     const uint32_t millivolts = analogReadMilliVolts(TRAINER_BAT_ADC_PIN);
     return (float)millivolts * TRAINER_BAT_DIVIDER / 1000.0f;
+}
+
+/* ------------------------------------------------------------------ radio ---- */
+
+/*
+ * How far this device reaches is decided by three PHY settings, and all three
+ * can be set in software:
+ *
+ *   - the country code. An ESP32 that was never given one runs as country "01",
+ *     the worldwide safe set, which is the lowest common denominator of every
+ *     regulation: less power and fewer channels than a real country allows.
+ *   - the transmit power. Set it explicitly to the ceiling of the radio instead
+ *     of trusting a default that another component could have lowered.
+ *   - the channel width. HT40 doubles the occupied spectrum and the throughput,
+ *     and costs link margin. This device sends a small JSON now and then, so HT20
+ *     is the better trade at the edge of a network.
+ *
+ * What these do NOT fix: the T-RGB carries a small printed antenna on a board
+ * full of a 480x480 display, and its radio is the weak part of the design. If the
+ * scan below shows the home network at -85 dBm, no software will make that a good
+ * link; move the device, or put a repeater between it and the router.
+ */
+static void applyRadioSettings()
+{
+    const esp_err_t country = esp_wifi_set_country_code(TRAINER_WIFI_COUNTRY, true);
+    const esp_err_t power = esp_wifi_set_max_tx_power(TRAINER_WIFI_TX_POWER_QUARTER_DBM);
+    const esp_err_t bandwidth = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+
+    /* Modem sleep wakes the radio only on the access point's beacon, which is
+     * good for a battery and bad for a round trip. Off here: the trainer is on a
+     * desk, and the web UI is used while the session runs. */
+    WiFi.setSleep(false);
+
+    Serial.printf("[wifi] country %s %s, tx power 19.5 dBm %s, HT20 %s\n",
+                  TRAINER_WIFI_COUNTRY,
+                  country == ESP_OK ? "ok" : esp_err_to_name(country),
+                  power == ESP_OK ? "ok" : esp_err_to_name(power),
+                  bandwidth == ESP_OK ? "ok" : esp_err_to_name(bandwidth));
+}
+
+/* One report, a few seconds after boot: either the joined network with its signal
+ * strength, or a scan of what the radio can hear at all. The second case is the
+ * one that explains a device which will not join: the ESP32 has no 5 GHz radio, so
+ * a 5 GHz-only SSID never appears in this list, and neither does a network that is
+ * simply too far away. */
+static void logRadioStatus()
+{
+    radioReportDone = true;
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.printf("[wifi] connected to \"%s\", %d dBm, channel %d, IP %s\n",
+                      WiFi.SSID().c_str(), WiFi.RSSI(), WiFi.channel(),
+                      WiFi.localIP().toString().c_str());
+        return;
+    }
+
+    WiFi.disconnect(false, false);
+    const int found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 120 /* ms per channel */);
+    Serial.printf("[wifi] not connected. %d network(s) in range:\n", found);
+    for (int i = 0; i < found && i < 12; i++)
+    {
+        Serial.printf("[wifi]   %4d dBm  channel %2d  %s%s\n", (int)WiFi.RSSI(i), (int)WiFi.channel(i),
+                      WiFi.SSID(i).c_str(), (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "  (open)" : "");
+    }
+    if (found <= 0)
+    {
+        Serial.println("[wifi] nothing at all. Check that the network is 2.4 GHz and in range: this radio cannot see 5 GHz.");
+    }
+    WiFi.scanDelete();
 }
 
 /* ------------------------------------------------------------- sessions ---- */
@@ -348,16 +426,20 @@ static void buildSnapshot()
     screen.unit = cfg().units;
 
     /* The footer is one short line; the panel has room for about 28 characters
-     * at this size. */
+     * at this size. The signal strength earns its place there: a weak link is the
+     * usual reason this device is hard to reach. */
     char footer[40];
-    const char *model = sensor.present() ? sensor.modelName() : "no sensor";
-    if (WiFi.status() == WL_CONNECTED)
+    if (!sensor.present())
     {
-        snprintf(footer, sizeof(footer), "%s %s", WiFi.localIP().toString().c_str(), model);
+        snprintf(footer, sizeof(footer), "no sensor on I2C");
+    }
+    else if (WiFi.status() == WL_CONNECTED)
+    {
+        snprintf(footer, sizeof(footer), "%s %ddBm", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     }
     else
     {
-        snprintf(footer, sizeof(footer), "AP %s %s", WiFi.softAPIP().toString().c_str(), model);
+        snprintf(footer, sizeof(footer), "AP %s", WiFi.softAPIP().toString().c_str());
     }
     strncpy(screen.footer, footer, sizeof(screen.footer) - 1);
     screen.footer[sizeof(screen.footer) - 1] = '\0';
@@ -500,6 +582,18 @@ void trainerTask(void *pvParameters)
             dt = TRAINER_MAX_STEP_SECONDS;
         }
         lastSampleUs = nowUs;
+
+        /* The radio: re-apply the PHY settings after a reconnect, and write one
+         * report to the serial port a few seconds after boot. */
+        if (radioReapplyRequested)
+        {
+            radioReapplyRequested = false;
+            applyRadioSettings();
+        }
+        if (!radioReportDone && millis() > TRAINER_WIFI_REPORT_MS)
+        {
+            logRadioStatus();
+        }
 
         /* The sensor and the touch controller share one bus, so both are polled
          * from this task and from nowhere else. */
@@ -660,6 +754,17 @@ void setup()
     /* --- network, web server, settings --- */
     esp32sveltekit.setMDNSAppName("DTT Trainer");
     esp32sveltekit.begin();
+
+    /* The radio settings need a started station interface, so they come after
+     * begin(). They are applied again whenever the station comes up, because the
+     * framework configures a network on every reconnect. */
+    applyRadioSettings();
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
+                 {
+        (void)event;
+        (void)info;
+        radioReapplyRequested = true; },
+                 ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
     trainerSettingsService.begin();
     trainerStateService.begin();

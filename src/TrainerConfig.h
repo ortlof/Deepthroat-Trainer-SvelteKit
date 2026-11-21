@@ -103,3 +103,22 @@
 /* Longest interval the session integration accepts in one step. A blocked task
  * must not be able to add a minute of depth time in one go. */
 #define TRAINER_MAX_STEP_SECONDS 0.5f
+
+/* -------------------------------------------------------------------- WiFi -- */
+
+/* The country the device is operated in. It decides which channels and which
+ * transmit power are legal, and an ESP32 that never got a real country code runs
+ * as "01", the worldwide safe set, which is the lowest common denominator of
+ * every regulation. Change it to your own country if you are not in Germany. */
+#ifndef TRAINER_WIFI_COUNTRY
+#define TRAINER_WIFI_COUNTRY "DE"
+#endif
+
+/* 19.5 dBm in quarter-dBm units, the ceiling of the ESP32-S3 radio. The IDF
+ * accepts 8 .. 84, which is 2 .. 21 dBm. */
+#define TRAINER_WIFI_TX_POWER_QUARTER_DBM 78
+
+/* How long after boot the radio report is written to the serial port. It scans
+ * when the device is not connected, which costs the radio about a second, so it
+ * happens once and only once. */
+#define TRAINER_WIFI_REPORT_MS 12000
