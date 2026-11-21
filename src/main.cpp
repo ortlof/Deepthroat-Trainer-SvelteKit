@@ -57,6 +57,7 @@
  * are re-applied from this project's own task and not from inside a callback. */
 static volatile bool radioReapplyRequested = false;
 static volatile bool radioReportDone = false;
+static uint32_t lastStatusMs = 0;
 
 PsychicHttpServer server;
 ESP32SvelteKit esp32sveltekit(&server, NUMBER_OF_ENDPOINTS);
@@ -133,6 +134,9 @@ static float readBatteryVolts();
 static void handleTouch();
 static void applyRadioSettings();
 static void logRadioStatus();
+static void printStatusLine();
+static void i2cBusScan();
+static void bootRadioScan();
 void trainerTask(void *pvParameters);
 void displayTask(void *pvParameters);
 
@@ -231,19 +235,138 @@ static void logRadioStatus()
         return;
     }
 
-    WiFi.disconnect(false, false);
-    const int found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 120 /* ms per channel */);
+    /* A negative return is a failed scan, not an empty band. Saying "nothing at
+     * all" for a scan that never ran would send the reader after the antenna for
+     * no reason. */
+    const int found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 300 /* ms per channel */);
+    if (found < 0)
+    {
+        Serial.printf("[wifi] not connected, and the scan itself failed with code %d (-1 running, -2 failed)\n", found);
+        return;
+    }
+
     Serial.printf("[wifi] not connected. %d network(s) in range:\n", found);
     for (int i = 0; i < found && i < 12; i++)
     {
         Serial.printf("[wifi]   %4d dBm  channel %2d  %s%s\n", (int)WiFi.RSSI(i), (int)WiFi.channel(i),
                       WiFi.SSID(i).c_str(), (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "  (open)" : "");
     }
-    if (found <= 0)
+    if (found == 0)
     {
-        Serial.println("[wifi] nothing at all. Check that the network is 2.4 GHz and in range: this radio cannot see 5 GHz.");
+        Serial.println("[wifi] the radio hears nothing. Check that the network is 2.4 GHz and in range: this radio cannot see 5 GHz.");
     }
     WiFi.scanDelete();
+}
+
+/* The same look, once, before the framework brings up its own access point: with
+ * nothing else running, an empty result means the radio really hears nothing. */
+static void bootRadioScan()
+{
+    WiFi.mode(WIFI_STA);
+    delay(150);
+
+    const int found = WiFi.scanNetworks(false, false, false, 300);
+    if (found < 0)
+    {
+        Serial.printf("[wifi] boot scan failed with code %d (-1 running, -2 failed)\n", found);
+    }
+    else
+    {
+        Serial.printf("[wifi] boot scan, before any access point of this device: %d network(s)\n", found);
+        for (int i = 0; i < found && i < 12; i++)
+        {
+            Serial.printf("[wifi]   %4d dBm  channel %2d  %s\n",
+                          (int)WiFi.RSSI(i), (int)WiFi.channel(i), WiFi.SSID(i).c_str());
+        }
+        if (found == 0)
+        {
+            Serial.println("[wifi] nothing at all. The radio does not hear a single access point, before anything of this device is transmitting.");
+        }
+    }
+    WiFi.scanDelete();
+}
+
+/* Which devices answer on the one I2C bus. Printed at start-up because that is
+ * the first thing to check when the sensor or the touch does nothing: it says
+ * whether the part is on the bus at all, instead of leaving a guess. */
+static void i2cBusScan()
+{
+    Serial.printf("[i2c] scan of SDA %d / SCL %d:", TRAINER_I2C_SDA, TRAINER_I2C_SCL);
+    uint8_t found = 0;
+    for (uint8_t address = 0x08; address < 0x78; address++)
+    {
+        Wire.beginTransmission(address);
+        if (Wire.endTransmission() != 0)
+        {
+            continue;
+        }
+        const char *who = "";
+        if (address == TRAINER_XL9535_ADDR)
+        {
+            who = " XL9535 (panel expander)";
+        }
+        else if (address == TRAINER_SENSOR_ADDR)
+        {
+            who = " VL6180X / VL6180 (distance sensor)";
+        }
+        else if (address == TRAINER_TOUCH_ADDR)
+        {
+            who = " CST820 / CST816 (touch)";
+        }
+        else if (address == 0x38)
+        {
+            who = " FT3267 (touch, half circle board)";
+        }
+        Serial.printf(" 0x%02X%s;", address, who);
+        found++;
+    }
+    if (found == 0)
+    {
+        Serial.print(" nothing answered");
+    }
+    Serial.println();
+}
+
+/* One line with everything the board knows about itself. Printed at the end of
+ * the radio report and then every minute: the USB serial port is opened by hand,
+ * so anything printed during the first seconds is usually lost. */
+static void printStatusLine()
+{
+    char wifi[64];
+    const wifi_mode_t mode = WiFi.getMode();
+    const char *modeName = (mode == WIFI_MODE_APSTA) ? "AP+STA" : ((mode == WIFI_MODE_AP) ? "AP" : "STA");
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        snprintf(wifi, sizeof(wifi), "%s %s %d dBm", modeName, WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    }
+    else
+    {
+        snprintf(wifi, sizeof(wifi), "%s %s", modeName, WiFi.softAPIP().toString().c_str());
+    }
+
+    char sensorText[80];
+    if (sensor.present())
+    {
+        snprintf(sensorText, sizeof(sensorText), "%s 0x%02X %s range %d mm depth %d mm",
+                 sensor.modelName(), sensor.modelId(), sensor.modeName(),
+                 (int)lroundf(trainer::rangeIsUsable(sensor.rangeMm()) ? sensor.rangeMm() : -1.0f),
+                 (int)lroundf(depthMm));
+    }
+    else
+    {
+        snprintf(sensorText, sizeof(sensorText), "not on the bus");
+    }
+
+    Serial.printf("[status] up %u s | display %s | sensor %s | touch %s | wifi %s | peak %d mm | session %s %d s, %u holds\n",
+                  (unsigned)(millis() / 1000),
+                  display.present() ? "ok" : "not started",
+                  sensorText,
+                  touch.stateName(),
+                  wifi,
+                  (int)lroundf(peakMm),
+                  session.active() ? "on" : "off",
+                  (int)lroundf(session.summary().elapsedSeconds),
+                  (unsigned)session.summary().holds);
 }
 
 /* ------------------------------------------------------------- sessions ---- */
@@ -593,6 +716,12 @@ void trainerTask(void *pvParameters)
         if (!radioReportDone && millis() > TRAINER_WIFI_REPORT_MS)
         {
             logRadioStatus();
+            printStatusLine();
+        }
+        if ((millis() - lastStatusMs) >= TRAINER_STATUS_INTERVAL_MS)
+        {
+            lastStatusMs = millis();
+            printStatusLine();
         }
 
         /* The sensor and the touch controller share one bus, so both are polled
@@ -739,6 +868,11 @@ void setup()
 
     /* --- the panel first: it brings up the I2C bus the sensor and the touch
      * controller need. --- */
+    /* The bus first, then a look at who answers on it: the sensor, the touch
+     * controller and the panel's expander all live on that one bus. */
+    Wire.begin(TRAINER_I2C_SDA, TRAINER_I2C_SCL, TRAINER_I2C_SPEED);
+    i2cBusScan();
+
     display.begin();
 
     Wire.setClock(TRAINER_I2C_SPEED);
@@ -752,6 +886,9 @@ void setup()
                   touch.present() ? "ok" : "MISSING");
 
     /* --- network, web server, settings --- */
+    /* One clean look at the band while nothing of this device is transmitting. */
+    bootRadioScan();
+
     esp32sveltekit.setMDNSAppName("DTT Trainer");
     esp32sveltekit.begin();
 

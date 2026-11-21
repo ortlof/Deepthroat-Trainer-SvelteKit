@@ -75,6 +75,7 @@ private:
     bool readResult();
     void startSingleShot();
     bool interruptFlagSet();
+    bool pollInternal();
 
     void regWrite(uint16_t reg, uint8_t value);
     uint8_t regRead(uint16_t reg);
@@ -83,6 +84,10 @@ private:
     TwoWire *_wire = nullptr;
     bool _useLibrary = false;
     bool _started = false;
+    /* A read that fails sets this, so poll() can tell a lost bus from a sample
+     * the sensor rejected. */
+    bool _busError = false;
+    uint8_t _readFailures = 0;
 
     uint8_t _address = TRAINER_SENSOR_ADDR;
     bool _present = false;

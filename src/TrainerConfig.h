@@ -81,6 +81,14 @@
 #define TRAINER_TOUCH_IRQ 1
 #define TRAINER_TOUCH_TAP_MS 600      /* shorter press: a tap */
 #define TRAINER_TOUCH_LONGPRESS_MS 1500
+/* While nothing touches the panel the interrupt line stays high and the I2C bus
+ * stays quiet; this is the longest the driver goes without looking anyway, for a
+ * board whose interrupt line is not connected. */
+#define TRAINER_TOUCH_IDLE_POLL_MS 300
+/* A controller that went to sleep needs a reset to answer again. One try soon
+ * after the sleep started, then rarely, so the serial port stays readable. */
+#define TRAINER_TOUCH_ASLEEP_PROBE_MS 2000
+#define TRAINER_TOUCH_ASLEEP_BACKOFF_MS 30000
 
 /* ---------------------------------------------------------------- battery -- */
 
@@ -122,3 +130,7 @@
  * when the device is not connected, which costs the radio about a second, so it
  * happens once and only once. */
 #define TRAINER_WIFI_REPORT_MS 12000
+
+/* One status line every minute, so a serial terminal that was opened late still
+ * shows what the board is doing. */
+#define TRAINER_STATUS_INTERVAL_MS 60000

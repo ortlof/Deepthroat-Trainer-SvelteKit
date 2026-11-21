@@ -4,7 +4,6 @@
  *   0x01 gesture id, 0x02 number of touch points,
  *   0x03/0x04 touch point 1 x (high/low), 0x05/0x06 touch point 1 y (high/low),
  *   0xA7 chip id. */
-#define REG_GESTURE 0x01
 #define REG_TOUCH_BLOCK 0x01
 #define REG_CHIP_ID 0xA7
 
@@ -18,59 +17,131 @@
 bool TrainerTouch::begin(TwoWire &wire, Arduino_XL9535SWSPI *xl9535, uint8_t address)
 {
     _wire = &wire;
+    _xl9535 = xl9535;
     _address = address;
 
-    reset(xl9535);
+    /* The interrupt line is only read, and a pull-up keeps it defined on a board
+     * where nothing drives it. */
+    pinMode(TRAINER_TOUCH_IRQ, INPUT_PULLUP);
 
-    /* The chip id tells a real controller from a floating bus. 0x00 and 0xFF
-     * are both "no answer", everything else is taken as a controller. */
-    uint8_t id = 0;
-    if (readRegisters(REG_CHIP_ID, &id, 1))
+    if (!probe())
     {
-        _chipId = id;
-        _present = (id != 0x00 && id != 0xFF);
-    }
-    else
-    {
-        _chipId = 0;
         _present = false;
+        _asleep = true;
+        _nextProbeMs = millis() + TRAINER_TOUCH_ASLEEP_PROBE_MS;
+        return false;
     }
-    return _present;
+
+    _present = true;
+    _asleep = false;
+    _lastReadMs = millis();
+    _nextProbeMs = millis();
+    return true;
 }
 
-void TrainerTouch::reset(Arduino_XL9535SWSPI *xl9535)
+void TrainerTouch::reset()
 {
-    if (xl9535)
+    if (!_xl9535)
     {
-        xl9535->pinMode(TRAINER_XL9535_PIN_TOUCH_RST, OUTPUT);
-        xl9535->digitalWrite(TRAINER_XL9535_PIN_TOUCH_RST, 0);
-        delay(TOUCH_RESET_LOW_MS);
-        xl9535->digitalWrite(TRAINER_XL9535_PIN_TOUCH_RST, 1);
-        delay(TOUCH_RESET_SETTLE_MS);
+        return;
     }
+    _xl9535->pinMode(TRAINER_XL9535_PIN_TOUCH_RST, OUTPUT);
+    _xl9535->digitalWrite(TRAINER_XL9535_PIN_TOUCH_RST, 0);
+    delay(TOUCH_RESET_LOW_MS);
+    _xl9535->digitalWrite(TRAINER_XL9535_PIN_TOUCH_RST, 1);
+    delay(TOUCH_RESET_SETTLE_MS);
+}
+
+/* A reset plus a chip id read. Used both at start-up and to wake a controller
+ * that went to sleep. */
+bool TrainerTouch::probe()
+{
+    reset();
+
+    /* The chip id tells a real controller from a floating bus. 0x00 and 0xFF are
+     * both "nothing answered", everything else is taken as a controller. */
+    uint8_t id = 0;
+    if (!readRegisters(REG_CHIP_ID, &id, 1))
+    {
+        _chipId = 0;
+        return false;
+    }
+    if (id == 0x00 || id == 0xFF)
+    {
+        _chipId = 0;
+        return false;
+    }
+    _chipId = id;
+    return true;
+}
+
+/* One failed read means the controller does not answer, and on this chip family
+ * that is what sleep looks like. Waking it with a reset is quiet on the bus;
+ * hammering it with a NACK on every poll is not. */
+void TrainerTouch::noteSleep()
+{
+    if (_asleep)
+    {
+        return;
+    }
+    _asleep = true;
+    _present = false;
+    _pressed = false;
+    _longFired = false;
+    _nextProbeMs = millis() + TRAINER_TOUCH_ASLEEP_PROBE_MS;
+    Serial.printf("[touch] no answer at 0x%02X after %u presses, waking it with a reset\n",
+                  _address, (unsigned)_presses);
 }
 
 void TrainerTouch::poll()
 {
-    if (!_present || !_wire)
+    if (!_wire)
     {
         return;
     }
 
     const uint32_t now = millis();
 
+    if (_asleep)
+    {
+        /* To keep the serial port readable, a probe that fails backs off. */
+        if ((int32_t)(now - _nextProbeMs) < 0)
+        {
+            return;
+        }
+        if (probe())
+        {
+            _asleep = false;
+            _present = true;
+            _lastReadMs = now;
+            _nextProbeMs = now;
+            _wakeups++;
+            Serial.printf("[touch] awake again (chip id 0x%02X), %u wakeups\n", _chipId, (unsigned)_wakeups);
+        }
+        else
+        {
+            _nextProbeMs = now + TRAINER_TOUCH_ASLEEP_BACKOFF_MS;
+        }
+        return;
+    }
+
+    /* The controller asserts its interrupt line for a touch. While nothing
+     * touches the panel a slow poll is enough; it also keeps a board whose
+     * interrupt line is not connected working. */
+    const bool interrupt = (digitalRead(TRAINER_TOUCH_IRQ) == LOW);
+    if (!interrupt && (now - _lastReadMs) < TRAINER_TOUCH_IDLE_POLL_MS)
+    {
+        return;
+    }
+
     /* gesture, finger count, x high/low, y high/low */
     uint8_t block[6] = {0};
     if (!readRegisters(REG_TOUCH_BLOCK, block, sizeof(block)))
     {
-        /* One lost read is not a missing controller; only a long silence is. */
-        if (_lastGoodMs != 0 && (now - _lastGoodMs) > 30000u)
-        {
-            _present = false;
-        }
+        noteSleep();
         return;
     }
-    _lastGoodMs = now;
+    _lastReadMs = now;
 
     const uint8_t gesture = block[0];
     const uint8_t points = block[1] & 0x0F;
@@ -117,6 +188,15 @@ TrainerTouch::Event TrainerTouch::takeEvent()
     const Event event = _pending;
     _pending = Event::none;
     return event;
+}
+
+const char *TrainerTouch::stateName() const
+{
+    if (_asleep)
+    {
+        return "asleep";
+    }
+    return _present ? "ok" : "absent";
 }
 
 bool TrainerTouch::readRegisters(uint8_t reg, uint8_t *buffer, size_t len)

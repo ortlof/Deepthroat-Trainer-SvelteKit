@@ -45,6 +45,36 @@ void VL6180Sensor::setSamplePeriodMs(uint16_t periodMs)
 
 bool VL6180Sensor::poll()
 {
+    /* A bus read that fails is not a measurement: count it, and after a few in a
+     * row declare the sensor gone and let the slow retry look for it again. One
+     * NACK is not a lost sensor, and a lost sensor must not turn every poll into
+     * a NACK either. */
+    _busError = false;
+    const bool sampled = pollInternal();
+    if (_busError)
+    {
+        if (_readFailures < 255)
+        {
+            _readFailures++;
+        }
+        if (_readFailures >= 5 && _present)
+        {
+            _present = false;
+            _mode = Mode::absent;
+            _rangeMm = NAN;
+            _status = 0xFF;
+            Serial.println("[sensor] lost the sensor on the I2C bus, looking for it again every 5 s");
+        }
+    }
+    else
+    {
+        _readFailures = 0;
+    }
+    return sampled;
+}
+
+bool VL6180Sensor::pollInternal()
+{
     const uint32_t now = millis();
 
     /* A sensor that is not there yet: look again now and then. Everything on
@@ -177,6 +207,7 @@ uint8_t VL6180Sensor::regRead(uint16_t reg)
 {
     if (!_wire)
     {
+        _busError = true;
         return 0xFF;
     }
     _wire->beginTransmission(_address);
@@ -184,10 +215,12 @@ uint8_t VL6180Sensor::regRead(uint16_t reg)
     _wire->write((uint8_t)(reg & 0xFF));
     if (_wire->endTransmission(false) != 0)
     {
+        _busError = true;
         return 0xFF;
     }
     if (_wire->requestFrom((int)_address, 1) != 1)
     {
+        _busError = true;
         return 0xFF;
     }
     return (uint8_t)_wire->read();
@@ -197,13 +230,17 @@ void VL6180Sensor::regWrite(uint16_t reg, uint8_t value)
 {
     if (!_wire)
     {
+        _busError = true;
         return;
     }
     _wire->beginTransmission(_address);
     _wire->write((uint8_t)(reg >> 8));
     _wire->write((uint8_t)(reg & 0xFF));
     _wire->write(value);
-    _wire->endTransmission();
+    if (_wire->endTransmission() != 0)
+    {
+        _busError = true;
+    }
 }
 
 /* Bit 2 of the GPIO interrupt status means "a range measurement is ready". */
@@ -236,6 +273,7 @@ bool VL6180Sensor::detect()
         _lastSampleMs = 0;
         _present = true;
         _chip.startRangeContinuous(_periodMs);
+        Serial.printf("[sensor] found %s (id 0x%02X), %s\n", modelName(), _modelId, modeName());
         return true;
     }
 
@@ -251,6 +289,8 @@ bool VL6180Sensor::detect()
         _present = true;
         _badSamples = 0;
         _goodSamples = 0;
+        Serial.printf("[sensor] found %s (id 0x%02X) without the VL6180X tuning, %s\n",
+                      modelName(), _modelId, modeName());
         return true;
     }
 
