@@ -77,6 +77,7 @@ private:
     uint8_t _address = TRAINER_TOUCH_ADDR;
     bool _present = false;
     bool _asleep = false;
+    bool _sleepLogged = false;
     bool _pressed = false;
     bool _longFired = false;
     int16_t _x = 0;

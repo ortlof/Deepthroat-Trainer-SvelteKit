@@ -89,8 +89,15 @@ void TrainerTouch::noteSleep()
     _pressed = false;
     _longFired = false;
     _nextProbeMs = millis() + TRAINER_TOUCH_ASLEEP_PROBE_MS;
-    Serial.printf("[touch] no answer at 0x%02X after %u presses, waking it with a reset\n",
-                  _address, (unsigned)_presses);
+    /* Once is enough: this chip goes quiet between touches by design, and a line
+     * for every nap would drown the rest of the log. */
+    if (!_sleepLogged)
+    {
+        _sleepLogged = true;
+        Serial.printf("[touch] chip id 0x%02X stops answering between touches (that is its sleep). "
+                      "Polling pauses until the interrupt line or the %d s fallback says otherwise.\n",
+                      _chipId, (int)(TRAINER_TOUCH_ASLEEP_PROBE_MS / 1000));
+    }
 }
 
 void TrainerTouch::poll()
@@ -104,22 +111,33 @@ void TrainerTouch::poll()
 
     if (_asleep)
     {
-        /* To keep the serial port readable, a probe that fails backs off. */
-        if ((int32_t)(now - _nextProbeMs) < 0)
+        /* A sleeping controller wakes on a touch, and the interrupt line says so:
+         * a direct read is then enough. No reset is needed, and a reset on every
+         * try would only add bus traffic and lines to the log. */
+        const bool interrupt = (digitalRead(TRAINER_TOUCH_IRQ) == LOW);
+        if (!interrupt && (int32_t)(now - _nextProbeMs) < 0)
         {
             return;
         }
-        if (probe())
+        uint8_t id = 0;
+        if (readRegisters(REG_CHIP_ID, &id, 1) && id != 0x00 && id != 0xFF)
         {
+            _chipId = id;
             _asleep = false;
             _present = true;
             _lastReadMs = now;
             _nextProbeMs = now;
-            _wakeups++;
-            Serial.printf("[touch] awake again (chip id 0x%02X), %u wakeups\n", _chipId, (unsigned)_wakeups);
+            if (interrupt)
+            {
+                _wakeups++;
+                Serial.printf("[touch] awake for a touch (chip id 0x%02X), %u wakeups\n",
+                              _chipId, (unsigned)_wakeups);
+            }
         }
         else
         {
+            /* Back off as well: an interrupt line that stays low forever must not
+             * turn this into a poll loop. */
             _nextProbeMs = now + TRAINER_TOUCH_ASLEEP_BACKOFF_MS;
         }
         return;

@@ -21,6 +21,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_log.h>
 #include <esp_wifi.h>
 
 #include <ESP32SvelteKit.h>
@@ -53,11 +54,11 @@
 /* How long a notice stays on the state object. */
 #define NOTICE_TIMEOUT_MS 12000
 
-/* Set from the WiFi event task when the station came up, so the radio settings
- * are re-applied from this project's own task and not from inside a callback. */
-static volatile bool radioReapplyRequested = false;
+/* Set from the WiFi event task when a driver session starts or ends, so the radio
+ * settings are applied from this project's own task and not inside a callback. */
 static volatile bool radioReportDone = false;
 static uint32_t lastStatusMs = 0;
+static uint32_t lastRadioAttemptMs = 0;
 
 PsychicHttpServer server;
 ESP32SvelteKit esp32sveltekit(&server, NUMBER_OF_ENDPOINTS);
@@ -132,7 +133,8 @@ static void buildSnapshot();
 static void publishState();
 static float readBatteryVolts();
 static void handleTouch();
-static void applyRadioSettings();
+static bool applyRadioSettings();
+static bool radioSettingsApplied = false;
 static void logRadioStatus();
 static void printStatusLine();
 static void i2cBusScan();
@@ -200,8 +202,22 @@ static float readBatteryVolts()
  * scan below shows the home network at -85 dBm, no software will make that a good
  * link; move the device, or put a repeater between it and the router.
  */
-static void applyRadioSettings()
+/* Applies the PHY settings. Returns true when they took effect, so the caller can
+ * tell "the driver is not up yet" from "done".
+ *
+ * The first attempt in this project's history ran once, right after
+ * esp32sveltekit.begin(), and failed with ESP_ERR_WIFI_NOT_INIT: the framework
+ * disconnects the station with the radio switched off while it starts, which
+ * de-initializes the driver, and every call below needs a started WiFi driver.
+ * The settings are therefore applied from a retry loop that runs while the driver
+ * is up, once per driver session. */
+static bool applyRadioSettings()
 {
+    if (WiFi.getMode() == WIFI_MODE_NULL)
+    {
+        return false; /* the driver is not initialized yet */
+    }
+
     const esp_err_t country = esp_wifi_set_country_code(TRAINER_WIFI_COUNTRY, true);
     const esp_err_t power = esp_wifi_set_max_tx_power(TRAINER_WIFI_TX_POWER_QUARTER_DBM);
     const esp_err_t bandwidth = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
@@ -211,11 +227,13 @@ static void applyRadioSettings()
      * desk, and the web UI is used while the session runs. */
     WiFi.setSleep(false);
 
-    Serial.printf("[wifi] country %s %s, tx power 19.5 dBm %s, HT20 %s\n",
+    const bool ok = (country == ESP_OK) && (power == ESP_OK) && (bandwidth == ESP_OK);
+    Serial.printf("[wifi] radio: country %s %s, 19.5 dBm %s, HT20 %s, sleep off\n",
                   TRAINER_WIFI_COUNTRY,
                   country == ESP_OK ? "ok" : esp_err_to_name(country),
                   power == ESP_OK ? "ok" : esp_err_to_name(power),
                   bandwidth == ESP_OK ? "ok" : esp_err_to_name(bandwidth));
+    return ok;
 }
 
 /* One report, a few seconds after boot: either the joined network with its signal
@@ -237,11 +255,24 @@ static void logRadioStatus()
 
     /* A negative return is a failed scan, not an empty band. Saying "nothing at
      * all" for a scan that never ran would send the reader after the antenna for
-     * no reason. */
-    const int found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 300 /* ms per channel */);
+     * no reason. The framework scans every five seconds while it cannot join, so
+     * two scans can collide; retry instead of reporting a failure that is only a
+     * collision. */
+    int found = -2;
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 300 /* ms per channel */);
+        if (found >= 0)
+        {
+            break;
+        }
+        Serial.printf("[wifi] scan returned %d (%s), trying again in 4 s\n", found,
+                      (found == -1) ? "still running" : "failed");
+        delay(4000);
+    }
     if (found < 0)
     {
-        Serial.printf("[wifi] not connected, and the scan itself failed with code %d (-1 running, -2 failed)\n", found);
+        Serial.printf("[wifi] the scan keeps failing with code %d; another scan is probably running\n", found);
         return;
     }
 
@@ -357,12 +388,13 @@ static void printStatusLine()
         snprintf(sensorText, sizeof(sensorText), "not on the bus");
     }
 
-    Serial.printf("[status] up %u s | display %s | sensor %s | touch %s | wifi %s | peak %d mm | session %s %d s, %u holds\n",
+    Serial.printf("[status] up %u s | display %s | sensor %s | touch %s | wifi %s | radio %s | peak %d mm | session %s %d s, %u holds\n",
                   (unsigned)(millis() / 1000),
                   display.present() ? "ok" : "not started",
                   sensorText,
                   touch.stateName(),
                   wifi,
+                  radioSettingsApplied ? "DE 19.5 dBm HT20" : "pending",
                   (int)lroundf(peakMm),
                   session.active() ? "on" : "off",
                   (int)lroundf(session.summary().elapsedSeconds),
@@ -706,12 +738,16 @@ void trainerTask(void *pvParameters)
         }
         lastSampleUs = nowUs;
 
-        /* The radio: re-apply the PHY settings after a reconnect, and write one
-         * report to the serial port a few seconds after boot. */
-        if (radioReapplyRequested)
+        /* The radio: the PHY settings need a started WiFi driver, and the framework
+         * switches the radio off while it starts, so this retries until they take
+         * effect. The flag is re-armed by every station start and disconnect. */
+        if (!radioSettingsApplied && (millis() - lastRadioAttemptMs) >= 1000)
         {
-            radioReapplyRequested = false;
-            applyRadioSettings();
+            lastRadioAttemptMs = millis();
+            if (WiFi.status() != WL_CONNECTED && applyRadioSettings())
+            {
+                radioSettingsApplied = true;
+            }
         }
         if (!radioReportDone && millis() > TRAINER_WIFI_REPORT_MS)
         {
@@ -866,6 +902,14 @@ void setup()
     Serial.begin(SERIAL_BAUD_RATE);
     delay(200);
 
+    /* A touch controller that has gone to sleep does not answer, and that NACK is
+     * expected traffic, not a fault. The core prints five lines for each one, which
+     * would hide everything else on this port; this firmware reports the same
+     * facts itself in [i2c], [touch] and [status] lines. */
+    esp_log_level_set("i2c.master", ESP_LOG_NONE);
+    esp_log_level_set("Wire", ESP_LOG_NONE);
+    esp_log_level_set("esp32-hal-i2c-ng", ESP_LOG_NONE);
+
     /* --- the panel first: it brings up the I2C bus the sensor and the touch
      * controller need. --- */
     /* The bus first, then a look at who answers on it: the sensor, the touch
@@ -892,15 +936,34 @@ void setup()
     esp32sveltekit.setMDNSAppName("DTT Trainer");
     esp32sveltekit.begin();
 
-    /* The radio settings need a started station interface, so they come after
-     * begin(). They are applied again whenever the station comes up, because the
-     * framework configures a network on every reconnect. */
-    applyRadioSettings();
+    /* The radio settings need a started station interface, and the framework
+     * switches the radio off and on while it starts, so they are not applied here
+     * but from the retry loop in trainerTask(). Every station start, connect and
+     * disconnect re-arms that loop: a fresh driver session needs the settings
+     * again, and a disconnect is the moment before the next join. */
     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
                  {
         (void)event;
         (void)info;
-        radioReapplyRequested = true; },
+        radioSettingsApplied = false; },
+                 ARDUINO_EVENT_WIFI_STA_START);
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
+                 {
+        (void)event;
+        (void)info;
+        radioSettingsApplied = false; },
+                 ARDUINO_EVENT_WIFI_AP_START);
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
+                 {
+        (void)event;
+        (void)info;
+        radioSettingsApplied = false; },
+                 ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
+                 {
+        (void)event;
+        (void)info;
+        radioSettingsApplied = false; },
                  ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
     trainerSettingsService.begin();

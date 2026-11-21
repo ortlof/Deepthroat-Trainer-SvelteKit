@@ -85,10 +85,11 @@
  * stays quiet; this is the longest the driver goes without looking anyway, for a
  * board whose interrupt line is not connected. */
 #define TRAINER_TOUCH_IDLE_POLL_MS 300
-/* A controller that went to sleep needs a reset to answer again. One try soon
- * after the sleep started, then rarely, so the serial port stays readable. */
-#define TRAINER_TOUCH_ASLEEP_PROBE_MS 2000
-#define TRAINER_TOUCH_ASLEEP_BACKOFF_MS 30000
+/* A controller that went to sleep answers again on a touch. While it is asleep the
+ * interrupt line is the trigger; this is the slow fallback for a board whose
+ * interrupt line is not connected. */
+#define TRAINER_TOUCH_ASLEEP_PROBE_MS 10000
+#define TRAINER_TOUCH_ASLEEP_BACKOFF_MS 10000
 
 /* ---------------------------------------------------------------- battery -- */
 
