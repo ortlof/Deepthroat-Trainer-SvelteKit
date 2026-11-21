@@ -63,14 +63,42 @@ public:
     uint32_t wakeups() const { return _wakeups; }
     const char *stateName() const;
 
+    /* Diagnostics: what the controller really answered, for a panel whose touch
+     * does nothing. Visible in the trainer state as touch_block and touch_* . */
+    uint8_t irqLevel() const { return _irqLevel; }
+    uint32_t reads() const { return _reads; }
+    uint32_t readFailures() const { return _readFailures; }
+    const uint8_t *lastBlock() const { return _lastBlock; }
+    const uint8_t *dump() const { return _dump; }
+    const uint8_t *dumpChanged() const { return _dumpChanged; }
+    uint32_t dumpChanges() const { return _dumpChanges; }
+    uint8_t autoSleepDisabled() const { return _autoSleepDisabled; }
+
+    /* The interrupt line is the only proof that the pin and the wiring are right:
+     * if this stays 0 while a finger is on the panel, nothing else matters. */
+    uint32_t irqPulses() const { return _irqPulses; }
+
+    /* The last frame in which the controller reported a real point, and how many
+     * such frames have arrived since boot. */
+    const uint8_t *touchFrame() const { return _touchFrame; }
+    uint32_t touchFrames() const { return _touchFrames; }
+
+    /* Called from the interrupt: sets a flag and counts. No I2C in an interrupt.
+     * The attribute belongs to the definition only; on both, the linker complains
+     * about conflicting sections. */
+    void onIrq();
+
     /* Returns the pending gesture and clears it, so each press is acted on once. */
     Event takeEvent();
 
 private:
     bool readRegisters(uint8_t reg, uint8_t *buffer, size_t len);
-    bool probe(); /* reset the controller, then read its chip id */
+    bool writeRegister(uint8_t reg, uint8_t value);
+    bool probe();   /* reset the controller, then read its chip id and configure it */
+    void configure(); /* the registers that make the controller usable by polling */
     void reset();
     void noteSleep();
+    void applyBlock(uint32_t now, const uint8_t *block);
 
     TwoWire *_wire = nullptr;
     Arduino_XL9535SWSPI *_xl9535 = nullptr;
@@ -88,5 +116,18 @@ private:
     uint32_t _nextProbeMs = 0;
     uint32_t _wakeups = 0;
     uint8_t _chipId = 0;
+    uint8_t _autoSleepDisabled = 0;
+    uint8_t _failStreak = 0;
+    uint32_t _reads = 0;
+    uint32_t _readFailures = 0;
+    uint8_t _irqLevel = 0;
+    uint8_t _lastBlock[6] = {0};
+    uint8_t _dump[16] = {0};        /* registers 0x00..0x0F, every poll */
+    uint8_t _dumpChanged[16] = {0}; /* the window in which the registers last changed */
+    uint32_t _dumpChanges = 0;
+    volatile uint32_t _irqPulses = 0;
+    volatile bool _irqSeen = false;
+    uint8_t _touchFrame[13] = {0};
+    uint32_t _touchFrames = 0;
     Event _pending = Event::none;
 };

@@ -100,11 +100,16 @@
 #define TRAINER_TOUCH_IRQ 1
 #define TRAINER_TOUCH_TAP_MS 600      /* shorter press: a tap */
 #define TRAINER_TOUCH_LONGPRESS_MS 1500
-/* While nothing touches the panel the interrupt line stays high and the I2C bus
- * stays quiet; this is the longest the driver goes without looking anyway, for a
- * board whose interrupt line is not connected. A read of a sleeping chip is a NACK
- * and the core logs two lines for it, so it is deliberately slow. */
-#define TRAINER_TOUCH_IDLE_POLL_MS 30000
+
+/* While the controller answers, its registers are sampled at this rate. The
+ * CST820 does not hold its interrupt line low for the length of a touch (LilyGo's
+ * own driver reads the registers continuously for that reason), so a tap is not
+ * visible on the interrupt line alone. */
+#define TRAINER_TOUCH_POLL_MS 50
+
+/* Failed reads in a row before the controller counts as asleep. One NACK is a
+ * hiccup on a bus that the sensor shares. */
+#define TRAINER_TOUCH_FAIL_LIMIT 4
 /* A controller that went to sleep wakes on a touch, and a reset through the
  * expander wakes it as well. This is the fallback interval for a board whose
  * interrupt line is not connected; the expander answers, so it costs no NACK. */

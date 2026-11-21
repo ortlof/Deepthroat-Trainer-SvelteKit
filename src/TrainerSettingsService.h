@@ -34,7 +34,9 @@ class TrainerSettings
 public:
     /* --- geometry and sensor --- */
     float reference_mm = 150.0f;   /* distance that counts as depth 0 */
-    float max_depth_mm = 120.0f;   /* full scale of the gauge and the clamp */
+    float max_depth_mm = 145.0f;   /* full scale of the gauge and the clamp: with the
+                                    * reference at 150 mm this reaches 100 % at 5 mm,
+                                    * which is as close as the sensor measures well */
     float calibration_mm = 0.0f;   /* added to every range sample */
 
     /* --- goals --- */

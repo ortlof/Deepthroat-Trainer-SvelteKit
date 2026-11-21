@@ -93,6 +93,23 @@ public:
     uint32_t displayFrames = 0;
     bool touchPresent = false;
     uint32_t touchPresses = 0;
+
+    /* What the touch controller really answers. A panel whose touch does nothing is
+     * read over the API with these instead of over a serial capture. */
+    uint8_t touchChipId = 0;
+    uint8_t touchIrq = 0;
+    uint8_t touchAutoSleep = 0;
+    int16_t touchX = 0;
+    int16_t touchY = 0;
+    uint32_t touchReads = 0;
+    uint32_t touchReadFailures = 0;
+    char touchBlock[20] = "";
+    char touchDump[56] = "";        /* touch registers 0x00..0x0F, one line of hex */
+    char touchDumpChanged[56] = ""; /* the window in which they last changed */
+    uint32_t touchDumpChanges = 0;
+    uint32_t touchIrqPulses = 0;    /* falling edges seen on the interrupt line */
+    uint32_t touchFrames = 0;       /* frames that carried a real point */
+    char touchFrame[56] = "";       /* the last such frame, 13 bytes of hex */
     float batteryV = 0.0f;
     bool batteryKnown = false;
 
@@ -159,6 +176,20 @@ public:
         root["display_frames"] = state.displayFrames;
         root["touch_present"] = state.touchPresent;
         root["touch_presses"] = state.touchPresses;
+        root["touch_chip_id"] = state.touchChipId;
+        root["touch_irq"] = state.touchIrq;
+        root["touch_auto_sleep"] = state.touchAutoSleep;
+        root["touch_x"] = state.touchX;
+        root["touch_y"] = state.touchY;
+        root["touch_reads"] = state.touchReads;
+        root["touch_read_failures"] = state.touchReadFailures;
+        root["touch_block"] = state.touchBlock;
+        root["touch_dump"] = state.touchDump;
+        root["touch_dump_changed"] = state.touchDumpChanged;
+        root["touch_dump_changes"] = state.touchDumpChanges;
+        root["touch_irq_pulses"] = state.touchIrqPulses;
+        root["touch_frames"] = state.touchFrames;
+        root["touch_frame"] = state.touchFrame;
         root["battery_v"] = state.batteryV;
         root["battery_known"] = state.batteryKnown;
 
