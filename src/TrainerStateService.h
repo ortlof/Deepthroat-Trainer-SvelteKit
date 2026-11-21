@@ -50,10 +50,10 @@ public:
     /* --- what the sensor sees --- */
     bool sensorPresent = false;
     int sensorModelId = 0;
-    String sensorModel = "unknown";
-    String sensorMode = "absent";
+    char sensorModel[24] = "unknown";
+    char sensorMode[16] = "absent";
     int sensorStatus = -1;
-    String sensorStatusText = "no sample yet";
+    char sensorStatusText[48] = "no sample yet";
     float rangeMm = -1.0f; /* -1: no usable sample */
     uint32_t sensorGood = 0;
     uint32_t sensorBad = 0;
@@ -64,7 +64,7 @@ public:
     float peakMm = 0.0f;
     float gauge = 0.0f;
     int level = 0;
-    String levelName = "Warm up";
+    char levelName[24] = "Warm up";
     float goalMm = 0.0f;
     bool inZone = false;
     bool holdComplete = false;
@@ -121,7 +121,7 @@ public:
 
     /* --- one line for the user: calibration done, sensor missing, hold
      * complete. Written by the device, read by the UI. --- */
-    String notice = "";
+    char notice[96] = "";
 
     static void read(TrainerState &state, JsonObject &root)
     {

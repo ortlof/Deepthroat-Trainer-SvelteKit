@@ -120,7 +120,7 @@ static uint32_t lastValidSampleMs = 0;
 static uint32_t lastActivityMs = 0;
 static uint32_t lastStatePushMs = 0;
 static int lastGoalLevel = 0;
-static String notice;
+static char notice[96] = "";
 static uint32_t noticeSetMs = 0;
 static bool holdCounted = false;
 
@@ -164,7 +164,9 @@ static float currentGoalMm()
 
 static void setNotice(const char *text)
 {
-    notice = text;
+    /* A fixed array, not a String: this is written from the touch handler (trainer
+     * task) and from the command handler (network task) and read by both as well. */
+    snprintf(notice, sizeof(notice), "%s", (text != nullptr) ? text : "");
     noticeSetMs = millis();
 }
 
@@ -281,6 +283,18 @@ static const char *joinReasonHint(uint8_t reason)
 static uint8_t joinFailures = 0;
 static uint32_t lastPlainJoinMs = 0;
 
+/* The same last resort, and it alternates between two ways of joining:
+ *
+ *   - a plain join, which makes the station scan and pick an access point itself,
+ *   - a join pinned to the channel and BSSID the framework stored from the last good
+ *     scan, which skips the scan completely.
+ *
+ * On a link as weak as this board's, the scan is the expensive half of the work: it
+ * takes the radio away from the join, and a failed scan is what leaves the framework
+ * reporting "no suitable network". Trying both means a bad scan cannot block the join
+ * for ever. */
+static uint8_t plainJoinPinned = 0;
+
 static void tryPlainJoin()
 {
     if (WiFi.status() == WL_CONNECTED || joinFailures < 2)
@@ -302,13 +316,35 @@ static void tryPlainJoin()
 
     lastPlainJoinMs = millis();
     const wifi_settings_t &network = stored.wifiSettings.front();
-    Serial.printf("[wifi] %u joins failed, trying a plain join to \"%s\" without the pinned access point\n",
-                  (unsigned)joinFailures, network.ssid.c_str());
+
+    /* A stored channel and BSSID are usable when the framework has joined this
+     * network at least once since it was saved. */
+    uint8_t bssidSum = 0;
+    for (size_t i = 0; i < sizeof(network.bssid); i++)
+    {
+        bssidSum = (uint8_t)(bssidSum | network.bssid[i]);
+    }
+    const bool pinned = (network.channel > 0) && (bssidSum != 0);
+
+    plainJoinPinned = (uint8_t)((plainJoinPinned + 1) & 1);
+
     /* disconnect without switching the radio off: this also cancels a scan that is
      * stuck in the running state, which is what keeps the framework from finding a
      * network again after a failed handshake. */
     WiFi.disconnect(false, false);
     delay(50);
+
+    if (pinned && plainJoinPinned == 1)
+    {
+        Serial.printf("[wifi] %u joins failed, joining \"%s\" directly on channel %d at %02X:%02X:..:%02X, without a scan\n",
+                      (unsigned)joinFailures, network.ssid.c_str(), (int)network.channel,
+                      network.bssid[0], network.bssid[1], network.bssid[5]);
+        WiFi.begin(network.ssid.c_str(), network.password.c_str(), network.channel, network.bssid, true);
+        return;
+    }
+
+    Serial.printf("[wifi] %u joins failed, trying a plain join to \"%s\" without the pinned access point\n",
+                  (unsigned)joinFailures, network.ssid.c_str());
     WiFi.begin(network.ssid.c_str(), network.password.c_str());
 }
 
@@ -748,11 +784,16 @@ static void publishState()
     const bool sessionActive = session.active();
     const float range = (sensor.present() && trainer::rangeIsUsable(sensor.rangeMm())) ? sensor.rangeMm() : -1.0f;
     const uint8_t sensorStatus = sensor.present() ? sensor.status() : 0xFF;
-    const String sensorStatusText = sensor.present() ? String(sensor.statusText()) : String("no sensor on the I2C bus");
-    const String sensorModel = sensor.present() ? String(sensor.modelName()) : String("none");
-    const String sensorMode = String(sensor.modeName());
+    const char *sensorStatusText = sensor.present() ? sensor.statusText() : "no sensor on the I2C bus";
+    const char *sensorModel = sensor.present() ? sensor.modelName() : "none";
+    const char *sensorMode = sensor.modeName();
     const float battery = readBatteryVolts();
-    const String noticeText = (noticeSetMs != 0 && (millis() - noticeSetMs) > NOTICE_TIMEOUT_MS) ? String("") : notice;
+
+    /* A notice clears itself after a while. */
+    if (noticeSetMs != 0 && (millis() - noticeSetMs) > NOTICE_TIMEOUT_MS)
+    {
+        notice[0] = '\0';
+    }
 
     trainerStateService.update([&](TrainerState &state)
                                {
@@ -761,10 +802,10 @@ static void publishState()
         /* measured */
         if (state.sensorPresent != sensor.present()) { state.sensorPresent = sensor.present(); changed = true; }
         if (state.sensorModelId != (int)sensor.modelId()) { state.sensorModelId = (int)sensor.modelId(); changed = true; }
-        if (state.sensorModel != sensorModel) { state.sensorModel = sensorModel; changed = true; }
-        if (state.sensorMode != sensorMode) { state.sensorMode = sensorMode; changed = true; }
+        if (strcmp(state.sensorModel, sensorModel) != 0) { snprintf(state.sensorModel, sizeof(state.sensorModel), "%s", sensorModel); changed = true; }
+        if (strcmp(state.sensorMode, sensorMode) != 0) { snprintf(state.sensorMode, sizeof(state.sensorMode), "%s", sensorMode); changed = true; }
         if (state.sensorStatus != (int)sensorStatus) { state.sensorStatus = (int)sensorStatus; changed = true; }
-        if (state.sensorStatusText != sensorStatusText) { state.sensorStatusText = sensorStatusText; changed = true; }
+        if (strcmp(state.sensorStatusText, sensorStatusText) != 0) { snprintf(state.sensorStatusText, sizeof(state.sensorStatusText), "%s", sensorStatusText); changed = true; }
         if (fabsf(state.rangeMm - range) >= 0.5f) { state.rangeMm = range; changed = true; }
         if (state.sensorGood != sensor.goodSamples()) { state.sensorGood = sensor.goodSamples(); changed = true; }
         if (state.sensorBad != sensor.badSamples()) { state.sensorBad = sensor.badSamples(); changed = true; }
@@ -777,8 +818,8 @@ static void publishState()
         if (fabsf(state.gauge - gauge) >= 0.005f) { state.gauge = gauge; changed = true; }
         const int level = trainer::levelForDepth(depthMm, cfg().level1_mm, cfg().level2_mm, cfg().level3_mm);
         if (state.level != level) { state.level = level; changed = true; }
-        const String levelName = String(trainer::levelName(level));
-        if (state.levelName != levelName) { state.levelName = levelName; changed = true; }
+        const char *levelName = trainer::levelName(level);
+        if (strcmp(state.levelName, levelName) != 0) { snprintf(state.levelName, sizeof(state.levelName), "%s", levelName); changed = true; }
         if (state.goalLevel != lastGoalLevel) { state.goalLevel = lastGoalLevel; changed = true; }
         if (fabsf(state.goalMm - goal) >= 0.5f) { state.goalMm = goal; changed = true; }
         if (state.inZone != inZone) { state.inZone = inZone; changed = true; }
@@ -831,7 +872,7 @@ static void publishState()
         if (state.units != cfg().units) { state.units = cfg().units; changed = true; }
         if (fabsf(state.referenceMm - cfg().reference_mm) >= 0.5f) { state.referenceMm = cfg().reference_mm; changed = true; }
         if (state.autoAdvance != cfg().auto_advance) { state.autoAdvance = cfg().auto_advance; changed = true; }
-        if (state.notice != noticeText) { state.notice = noticeText; changed = true; }
+        if (strcmp(state.notice, notice) != 0) { snprintf(state.notice, sizeof(state.notice), "%s", notice); changed = true; }
 
         return changed ? StateUpdateResult::CHANGED : StateUpdateResult::UNCHANGED; },
                                TRAINER_DEVICE_ORIGIN);
@@ -899,6 +940,15 @@ void trainerTask(void *pvParameters)
             sensor.accountHostGap(loopGapMs);
         }
 
+        /* Reps need something to hold. With free play selected there is no goal, so a
+         * set would count nothing forever: rep mode holds level 1 instead and says so. */
+        if (playModeReps() && lastGoalLevel == 0)
+        {
+            lastGoalLevel = 1;
+            holdTracker.reset(cfg().hold_seconds);
+            setNotice("reps: holding level 1");
+        }
+
         /* The radio: the PHY settings need a started WiFi driver, and the framework
          * switches the radio off while it starts, so this retries until they take
          * effect. The flag is re-armed by every station start and disconnect. */
@@ -913,7 +963,13 @@ void trainerTask(void *pvParameters)
         /* A last resort for a network this station cannot join with the channel and
          * access point the framework pinned from its scan. */
         tryPlainJoin();
-        if (!radioReportDone && millis() > TRAINER_WIFI_REPORT_MS)
+        /* One report a few seconds after boot, but never while the framework is still
+         * trying to join: a scan takes the radio away from the join attempt, and at a
+         * weak signal that is the difference between joining and not. A connected
+         * device reports at once; a disconnected one waits for the grace period, so
+         * the framework gets an uninterrupted run of attempts first. */
+        if (!radioReportDone && millis() > TRAINER_WIFI_REPORT_MS &&
+            (WiFi.status() == WL_CONNECTED || millis() > TRAINER_WIFI_REPORT_MS + TRAINER_WIFI_REPORT_GRACE_MS))
         {
             logRadioStatus();
             printStatusLine();

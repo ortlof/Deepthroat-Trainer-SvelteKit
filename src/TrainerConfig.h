@@ -169,3 +169,7 @@
 /* One status line every minute, so a serial terminal that was opened late still
  * shows what the board is doing. */
 #define TRAINER_STATUS_INTERVAL_MS 60000
+
+/* The first radio report waits this much longer when the device is not connected, so
+ * its scan cannot collide with the framework's own join attempts. */
+#define TRAINER_WIFI_REPORT_GRACE_MS 45000
