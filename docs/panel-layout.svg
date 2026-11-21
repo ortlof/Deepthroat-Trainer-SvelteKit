@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" role="img" aria-label="Panel layout of the DTT-Trainer">
+  <title>DTT-Trainer panel layout</title>
+  <desc>Round 480x480 panel: a 270 degree ring gauge filled with cyan to about two thirds, an orange goal tick and a grey peak tick, a large depth number, a unit, the level line, a hold bar and a footer line with the device address.</desc>
+
+  <rect width="480" height="480" fill="#0b0b0d"/>
+  <circle cx="240" cy="240" r="236" fill="#111114"/>
+
+  <!-- ring track: 270 degrees from the lower left, clockwise over the top -->
+  <path d="M 91.6 388.4 A 212 212 0 1 1 388.4 388.4" fill="none" stroke="#2b2b30" stroke-width="28"/>
+  <!-- value: about two thirds of the track -->
+  <path d="M 91.6 388.4 A 212 212 0 1 1 331.4 96.8" fill="none" stroke="#00d5ff" stroke-width="28"/>
+
+  <!-- goal tick (orange) and peak tick (grey) sit outside the ring -->
+  <g stroke-linecap="round">
+    <line x1="378" y1="75" x2="392" y2="61" stroke="#ffa726" stroke-width="7"/>
+    <line x1="404" y1="100" x2="416" y2="88" stroke="#c9c9cf" stroke-width="5"/>
+  </g>
+
+  <text x="240" y="104" text-anchor="middle" fill="#c9c9cf" font-family="Helvetica, Arial, sans-serif" font-size="20">PEAK 87</text>
+
+  <text x="240" y="238" text-anchor="middle" fill="#ffffff" font-family="Helvetica, Arial, sans-serif" font-size="92" font-weight="bold">78</text>
+  <text x="240" y="276" text-anchor="middle" fill="#9aa0a6" font-family="Helvetica, Arial, sans-serif" font-size="26">mm</text>
+
+  <text x="240" y="316" text-anchor="middle" fill="#ffffff" font-family="Helvetica, Arial, sans-serif" font-size="24">goal Level 2 (70 mm)</text>
+  <text x="240" y="342" text-anchor="middle" fill="#9aa0a6" font-family="Helvetica, Arial, sans-serif" font-size="18">hold 70 mm for 3.0 s: 62%</text>
+
+  <rect x="165" y="349" width="150" height="15" rx="7.5" fill="#2b2b30"/>
+  <rect x="165" y="349" width="93" height="15" rx="7.5" fill="#00d5ff"/>
+
+  <text x="240" y="398" text-anchor="middle" fill="#9aa0a6" font-family="Helvetica, Arial, sans-serif" font-size="18">192.168.1.50 VL6180X</text>
+
+  <text x="240" y="452" text-anchor="middle" fill="#5b5b62" font-family="Helvetica, Arial, sans-serif" font-size="15">depth ring | goal tick (orange) | peak tick (grey) | hold bar</text>
+</svg>

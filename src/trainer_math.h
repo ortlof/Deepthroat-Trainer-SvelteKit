@@ -1,0 +1,293 @@
+#pragma once
+
+/*
+ *   Pure trainer maths: no Arduino headers, no hardware, no state that a device
+ *   owns. Every rule that turns a distance into a depth, a depth into a level, a
+ *   level into a hold, and a run into a session total lives here, so it can be
+ *   compiled and tested on a PC (test/host/test_trainer_math.cpp) instead of
+ *   only on the board.
+ *
+ *   Conventions:
+ *     range    distance the sensor reports, millimetres
+ *     depth    how far the trainer was taken, millimetres, 0 at the reference
+ *     reference distance from the sensor that counts as depth 0
+ *     calibration  a constant added to every range sample (mounting tolerance)
+ *     depth = clamp(reference - (range + calibration), 0, maxDepth)
+ */
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+namespace trainer
+{
+
+inline float clampf(float value, float low, float high)
+{
+    return (value < low) ? low : ((value > high) ? high : value);
+}
+
+/* ---------------------------------------------------------------- depth ---- */
+
+inline float depthFromRange(float rangeMm, float calibrationMm, float referenceMm, float maxDepthMm)
+{
+    const float corrected = rangeMm + calibrationMm;
+    return clampf(referenceMm - corrected, 0.0f, maxDepthMm);
+}
+
+/* The raw distance the sensor reports is never negative in practice; a huge
+ * reading is how the sensor says "nothing in front of me", so the applier keeps
+ * whatever is assumed beyond the range as depth 0. */
+inline bool rangeIsUsable(float rangeMm)
+{
+    return std::isfinite(rangeMm) && rangeMm > 0.0f && rangeMm < 250.0f;
+}
+
+inline float gaugeFraction(float depthMm, float maxDepthMm)
+{
+    if (!(maxDepthMm > 0.0f))
+    {
+        return 0.0f;
+    }
+    return clampf(depthMm / maxDepthMm, 0.0f, 1.0f);
+}
+
+/* ---------------------------------------------------------------- level ---- */
+
+/* 0 = below the first goal, 1..3 = that goal or deeper */
+inline int levelForDepth(float depthMm, float level1Mm, float level2Mm, float level3Mm)
+{
+    if (depthMm >= level3Mm && level3Mm > 0.0f)
+    {
+        return 3;
+    }
+    if (depthMm >= level2Mm && level2Mm > 0.0f)
+    {
+        return 2;
+    }
+    if (depthMm >= level1Mm && level1Mm > 0.0f)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+inline const char *levelName(int level)
+{
+    switch (level)
+    {
+    case 1:
+        return "Level 1";
+    case 2:
+        return "Level 2";
+    case 3:
+        return "Level 3";
+    default:
+        return "Warm up";
+    }
+}
+
+/* The user picks the goal as a level number; 0 means "no goal, free play". */
+inline float goalForLevel(int level, float level1Mm, float level2Mm, float level3Mm)
+{
+    switch (level)
+    {
+    case 1:
+        return level1Mm;
+    case 2:
+        return level2Mm;
+    case 3:
+        return level3Mm;
+    default:
+        return 0.0f;
+    }
+}
+
+/* --------------------------------------------------------------- filter ---- */
+
+/* Exponential moving average whose behaviour does not depend on the sample
+ * interval. tau is the time constant in seconds; tau = 0 passes the sample
+ * through unchanged. */
+class EmaFilter
+{
+public:
+    void reset()
+    {
+        _value = 0.0f;
+        _valid = false;
+    }
+
+    void seed(float value)
+    {
+        _value = value;
+        _valid = true;
+    }
+
+    float push(float sample, float dtSeconds, float tauSeconds)
+    {
+        if (!_valid || !(tauSeconds > 0.0f) || !(dtSeconds > 0.0f))
+        {
+            seed(sample);
+            return _value;
+        }
+        float alpha = 1.0f - std::exp(-dtSeconds / tauSeconds);
+        alpha = clampf(alpha, 0.0f, 1.0f);
+        _value += alpha * (sample - _value);
+        return _value;
+    }
+
+    float value() const { return _value; }
+    bool valid() const { return _valid; }
+
+private:
+    float _value = 0.0f;
+    bool _valid = false;
+};
+
+/* ---------------------------------------------------------------- holds ---- */
+
+/* Counts how long the depth stays at or above a goal. A hold is complete once
+ * the goal was held for holdSeconds without dropping out of the zone. */
+class HoldTracker
+{
+public:
+    void reset(float holdSeconds)
+    {
+        _need = (holdSeconds > 0.0f) ? holdSeconds : 0.0f;
+        _held = 0.0f;
+        _inZone = false;
+        _complete = false;
+    }
+
+    /* dtSeconds is capped by the caller, so a pause in the sample stream cannot
+     * jump the hold to complete in one step. */
+    void update(bool atGoal, float dtSeconds)
+    {
+        _inZone = atGoal;
+        if (!atGoal)
+        {
+            _complete = false;
+            _held = 0.0f;
+            return;
+        }
+        if (dtSeconds > 0.0f)
+        {
+            _held += dtSeconds;
+        }
+        if (_need <= 0.0f || _held >= _need)
+        {
+            _complete = true;
+        }
+    }
+
+    /* Called after a completed hold was counted, so the same hold is not
+     * counted again on the next sample. */
+    void acknowledge()
+    {
+        _complete = false;
+        _held = 0.0f;
+    }
+
+    void retarget(float holdSeconds)
+    {
+        _need = (holdSeconds > 0.0f) ? holdSeconds : 0.0f;
+    }
+
+    bool inZone() const { return _inZone; }
+    bool complete() const { return _complete; }
+    float heldSeconds() const { return _held; }
+    float neededSeconds() const { return _need; }
+
+    float progress() const
+    {
+        if (_need <= 0.0f)
+        {
+            return _inZone ? 1.0f : 0.0f;
+        }
+        return clampf(_held / _need, 0.0f, 1.0f);
+    }
+
+private:
+    float _need = 3.0f;
+    float _held = 0.0f;
+    bool _inZone = false;
+    bool _complete = false;
+};
+
+/* -------------------------------------------------------------- session ---- */
+
+struct SessionSummary
+{
+    uint32_t samples = 0;
+    float elapsedSeconds = 0.0f;
+    float peakMm = 0.0f;
+    float timeWeightedDepth = 0.0f; /* integral of depth over time, mm*s */
+    float deepSeconds = 0.0f;       /* time at or beyond the deep threshold */
+    uint32_t holds = 0;
+    float longestHoldSeconds = 0.0f;
+
+    float averageMm() const
+    {
+        return (elapsedSeconds > 0.0f) ? (timeWeightedDepth / elapsedSeconds) : 0.0f;
+    }
+};
+
+class Session
+{
+public:
+    void begin()
+    {
+        _summary = SessionSummary();
+        _active = true;
+    }
+
+    void end()
+    {
+        _active = false;
+    }
+
+    void clear()
+    {
+        _summary = SessionSummary();
+        _active = false;
+    }
+
+    /* The caller integrates, this only accumulates, so one place decides how the
+     * sample interval is handled. dtSeconds is clamped in main, not here. */
+    void addSample(float depthMm, float dtSeconds, float deepThresholdMm)
+    {
+        if (dtSeconds <= 0.0f)
+        {
+            return;
+        }
+        _summary.samples++;
+        _summary.elapsedSeconds += dtSeconds;
+        _summary.timeWeightedDepth += depthMm * dtSeconds;
+        if (depthMm > _summary.peakMm)
+        {
+            _summary.peakMm = depthMm;
+        }
+        if (deepThresholdMm > 0.0f && depthMm >= deepThresholdMm)
+        {
+            _summary.deepSeconds += dtSeconds;
+        }
+    }
+
+    void countHold(float heldSeconds)
+    {
+        _summary.holds++;
+        if (heldSeconds > _summary.longestHoldSeconds)
+        {
+            _summary.longestHoldSeconds = heldSeconds;
+        }
+    }
+
+    bool active() const { return _active; }
+    const SessionSummary &summary() const { return _summary; }
+
+private:
+    SessionSummary _summary;
+    bool _active = false;
+};
+
+} /* namespace trainer */
