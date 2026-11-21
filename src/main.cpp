@@ -135,6 +135,7 @@ static float readBatteryVolts();
 static void handleTouch();
 static bool applyRadioSettings();
 static bool radioSettingsApplied = false;
+static void tryPlainJoin();
 static void logRadioStatus();
 static void printStatusLine();
 static void i2cBusScan();
@@ -236,6 +237,64 @@ static bool applyRadioSettings()
     return ok;
 }
 
+/* What a disconnect reason means in practice, for the log line below. */
+static const char *joinReasonHint(uint8_t reason)
+{
+    switch (reason)
+    {
+    case 15:
+    case 204:
+        return " (handshake timeout: most often a wrong password, or a signal too weak for the handshake)";
+    case 201:
+        return " (access point not found: check that the network is 2.4 GHz and in range)";
+    case 202:
+        return " (authentication refused: wrong password)";
+    case 203:
+        return " (association refused by the access point)";
+    case 205:
+        return " (the access point dropped the connection)";
+    case 2:
+        return " (authentication expired)";
+    case 200:
+        return " (beacon timeout: the access point stopped answering)";
+    default:
+        return "";
+    }
+}
+
+/* After a few failed joins the framework keeps pinning the channel and the BSSID
+ * from its own scan. A plain join lets the station choose for itself, which is what
+ * helps against a weak signal, a mesh or band steering. Tried rarely, and only while
+ * the framework has not got the link up either. */
+static uint8_t joinFailures = 0;
+static uint32_t lastPlainJoinMs = 0;
+
+static void tryPlainJoin()
+{
+    if (WiFi.status() == WL_CONNECTED || joinFailures < 3)
+    {
+        return;
+    }
+    if ((millis() - lastPlainJoinMs) < 60000u)
+    {
+        return;
+    }
+
+    WiFiSettings stored;
+    esp32sveltekit.getWiFiSettingsService()->read([&stored](WiFiSettings &value)
+                                                  { stored = value; });
+    if (stored.wifiSettings.empty())
+    {
+        return;
+    }
+
+    lastPlainJoinMs = millis();
+    const wifi_settings_t &network = stored.wifiSettings.front();
+    Serial.printf("[wifi] %u joins failed, trying a plain join to \"%s\" without the pinned access point\n",
+                  (unsigned)joinFailures, network.ssid.c_str());
+    WiFi.begin(network.ssid.c_str(), network.password.c_str());
+}
+
 /* One report, a few seconds after boot: either the joined network with its signal
  * strength, or a scan of what the radio can hear at all. The second case is the
  * one that explains a device which will not join: the ESP32 has no 5 GHz radio, so
@@ -244,6 +303,21 @@ static bool applyRadioSettings()
 static void logRadioStatus()
 {
     radioReportDone = true;
+
+    /* What the user stored, so a wrong password length or a typo in the SSID shows
+     * up here. The password itself is never printed. */
+    {
+        WiFiSettings stored;
+        esp32sveltekit.getWiFiSettingsService()->read([&stored](WiFiSettings &value)
+                                                      { stored = value; });
+        Serial.printf("[wifi] %u stored network(s):", (unsigned)stored.wifiSettings.size());
+        for (auto &network : stored.wifiSettings)
+        {
+            Serial.printf(" \"%s\" (%u character password)", network.ssid.c_str(),
+                          (unsigned)network.password.length());
+        }
+        Serial.println();
+    }
 
     if (WiFi.status() == WL_CONNECTED)
     {
@@ -749,6 +823,9 @@ void trainerTask(void *pvParameters)
                 radioSettingsApplied = true;
             }
         }
+        /* A last resort for a network this station cannot join with the channel and
+         * access point the framework pinned from its scan. */
+        tryPlainJoin();
         if (!radioReportDone && millis() > TRAINER_WIFI_REPORT_MS)
         {
             logRadioStatus();
@@ -938,9 +1015,9 @@ void setup()
 
     /* The radio settings need a started station interface, and the framework
      * switches the radio off and on while it starts, so they are not applied here
-     * but from the retry loop in trainerTask(). Every station start, connect and
-     * disconnect re-arms that loop: a fresh driver session needs the settings
-     * again, and a disconnect is the moment before the next join. */
+     * but from the retry loop in trainerTask(). Only a fresh driver session needs
+     * them again: re-applying them on every reconnect disturbed a running scan and
+     * made the framework report "WiFi scan failed". */
     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
                  {
         (void)event;
@@ -957,14 +1034,14 @@ void setup()
                  {
         (void)event;
         (void)info;
-        radioSettingsApplied = false; },
+        const uint8_t reason = info.wifi_sta_disconnected.reason;
+        if (joinFailures < 255)
+        {
+            joinFailures++;
+        }
+        Serial.printf("[wifi] join attempt %u failed, reason %u%s\n",
+                      (unsigned)joinFailures, (unsigned)reason, joinReasonHint(reason)); },
                  ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info)
-                 {
-        (void)event;
-        (void)info;
-        radioSettingsApplied = false; },
-                 ARDUINO_EVENT_WIFI_STA_CONNECTED);
 
     trainerSettingsService.begin();
     trainerStateService.begin();
