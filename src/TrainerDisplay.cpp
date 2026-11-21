@@ -39,6 +39,11 @@
 #define FOOTER_CY 392
 #define HEADER_CY 100
 
+/* Battery symbol: top left, inside the ring, clear of the peak readout in the middle. */
+#define BATTERY_X 134
+#define BATTERY_CY HEADER_CY
+#define BATTERY_W 30
+
 /* ------------------------------------------------------------------ colours -- */
 
 #define COL_BG 0x0000
@@ -211,6 +216,7 @@ void TrainerDisplay::drawStatic()
     _drawnPeakGauge = -1.0f;
     _drawnInZone = false;
     _lastSessionActive = false;
+    _batteryBucket = -2; /* the screen is black again: the symbol has to be redrawn */
 }
 
 void TrainerDisplay::drawGauge(float gauge, bool inZone)
@@ -342,7 +348,20 @@ void TrainerDisplay::drawUnit(const TrainerScreen &screen)
 void TrainerDisplay::drawLevelLine(const TrainerScreen &screen)
 {
     char buffer[40];
-    if (screen.goalLevel <= 0)
+    if (screen.repMode)
+    {
+        /* Rep mode: the count takes the line, because the count is the game. The
+         * level name is still shown by the empty case below when no goal is picked. */
+        if (screen.repTarget > 0)
+        {
+            snprintf(buffer, sizeof(buffer), "REP %u / %u", (unsigned)screen.repCount, (unsigned)screen.repTarget);
+        }
+        else
+        {
+            snprintf(buffer, sizeof(buffer), "REP %u", (unsigned)screen.repCount);
+        }
+    }
+    else if (screen.goalLevel <= 0)
     {
         snprintf(buffer, sizeof(buffer), "free play - %s", trainer::levelName(screen.level));
     }
@@ -354,7 +373,11 @@ void TrainerDisplay::drawLevelLine(const TrainerScreen &screen)
     if (_lastLevelLine != buffer)
     {
         uint16_t color = COL_TEXT;
-        if (screen.goalLevel > 0 && screen.level >= screen.goalLevel)
+        if (screen.repMode && screen.repTarget > 0 && screen.repCount >= screen.repTarget)
+        {
+            color = COL_DONE; /* the set is done */
+        }
+        else if (screen.goalLevel > 0 && screen.level >= screen.goalLevel)
         {
             color = COL_DONE;
         }
@@ -363,6 +386,42 @@ void TrainerDisplay::drawLevelLine(const TrainerScreen &screen)
         _lastLevelLine = buffer;
         _lastLevelWidth = textWidth(&FreeSansBold12pt7b, buffer, 1);
         drawCentered(&FreeSansBold12pt7b, 1, CX, LEVEL_CY, buffer, color);
+    }
+}
+
+/* A battery symbol at the top left, inside the ring: a body with a nub, filled by the
+ * cell voltage. 3.30 V is the empty mark and 4.20 V the full one, the usual range of
+ * the single cell this board carries. The fill only repaints when it crosses a 5 %
+ * step, so an idle panel costs one comparison per frame. */
+void TrainerDisplay::drawBattery(bool known, float volts)
+{
+    int percent = -1;
+    if (known)
+    {
+        percent = (int)lroundf((volts - 3.30f) / (4.20f - 3.30f) * 100.0f);
+        percent = (percent < 0) ? 0 : ((percent > 100) ? 100 : percent);
+    }
+
+    const int8_t bucket = known ? (int8_t)(percent / 5) : -1;
+    if (bucket == _batteryBucket)
+    {
+        return;
+    }
+    _batteryBucket = bucket;
+
+    const uint16_t color = !known ? COL_DIM
+                                  : ((percent <= 15) ? COL_WARN : ((percent <= 40) ? COL_GOAL : COL_ZONE));
+    /* Clear the body's area plus the nub, then draw the outline and the fill. */
+    _gfx->fillRect(BATTERY_X - 3, BATTERY_CY - 11, BATTERY_W + 11, 22, COL_BG);
+    _gfx->drawRoundRect(BATTERY_X, BATTERY_CY - 8, BATTERY_W, 16, 3, color);
+    _gfx->fillRect(BATTERY_X + BATTERY_W, BATTERY_CY - 3, 4, 6, color);
+    if (known && percent > 0)
+    {
+        const int16_t inner = (int16_t)((BATTERY_W - 6) * percent / 100);
+        if (inner > 0)
+        {
+            _gfx->fillRect(BATTERY_X + 3, BATTERY_CY - 5, inner, 10, color);
+        }
     }
 }
 
@@ -453,6 +512,7 @@ void TrainerDisplay::render(const TrainerScreen &screen)
     drawLevelLine(screen);
     drawSessionLine(screen);
     drawHoldBar(screen);
+    drawBattery(screen.batteryKnown, screen.batteryV);
     drawFooter(screen);
 
     _gfx->flush();

@@ -153,6 +153,45 @@ int main()
         expectInt("clear empties the summary", (int)session.summary().samples, 0);
     }
 
+    /* ---- rep mode --------------------------------------------------------- */
+    {
+        RepCount reps;
+        reps.reset(0);
+        expectTrue("a fresh set is armed", reps.armed);
+        expectTrue("a completed hold counts as a rep", reps.countRep(0));
+        expectInt("one rep after one hold", (int)reps.count, 1);
+        expectTrue("the next rep waits for a release", !reps.armed);
+        expectTrue("holding on does not count again", !reps.countRep(0));
+        expectInt("still one rep", (int)reps.count, 1);
+        expectTrue("a return to the start arms it", reps.release(3.0f, 8.0f));
+        expectTrue("a release only happens once", !reps.release(2.0f, 8.0f));
+        expectTrue("a deep depth does not arm it", !reps.release(60.0f, 8.0f) && reps.armed);
+        expectTrue("the next hold counts", reps.countRep(0));
+        expectInt("two reps", (int)reps.count, 2);
+
+        RepCount set;
+        set.reset(3);
+        expectInt("three left at the start", (int)set.remaining(3), 3);
+        set.countRep(3);
+        set.release(1.0f, 8.0f);
+        set.countRep(3);
+        set.release(1.0f, 8.0f);
+        expectInt("one left after two reps", (int)set.remaining(3), 1);
+        expectTrue("the target is not reached yet", !set.targetReached);
+        set.countRep(3);
+        expectTrue("the third rep reaches the target", set.targetReached);
+        expectInt("nothing left", (int)set.remaining(3), 0);
+        expectTrue("a rep while unarmed is ignored", !set.countRep(3));
+        expectInt("the count stays at the target", (int)set.count, 3);
+
+        RepCount edge;
+        edge.reset(0);
+        edge.countRep(0);
+        expectTrue("exactly at the threshold counts as released", edge.release(8.0f, 8.0f));
+        edge.reset(2);
+        expectTrue("a fresh set is never already done", !edge.targetReached);
+    }
+
     /* ---- sensor sanity --------------------------------------------------- */
     expectTrue("150 mm is usable", rangeIsUsable(150.0f));
     expectTrue("0 mm is not usable", !rangeIsUsable(0.0f));

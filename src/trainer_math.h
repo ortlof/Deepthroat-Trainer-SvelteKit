@@ -27,6 +27,58 @@ inline float clampf(float value, float low, float high)
     return (value < low) ? low : ((value > high) ? high : value);
 }
 
+/* --------------------------------------------------------------- rep mode ---- */
+
+/* A rep is the goal held for the hold time, and the next rep needs a full return to
+ * the start. That is what makes the count a workout: holding the goal without coming
+ * back up counts once, and the countdown cannot be gamed by staying deep. */
+struct RepCount
+{
+    uint16_t count = 0;
+    bool armed = true;         /* ready to accept a completed hold */
+    bool targetReached = false;
+
+    void reset(uint16_t target)
+    {
+        count = 0;
+        armed = true;
+        targetReached = (target == 0) ? false : (count >= target);
+    }
+
+    /* Returns true when the hold counts as a rep. A rep that arrives while the
+     * previous one has not been released is ignored. */
+    bool countRep(uint16_t target)
+    {
+        if (!armed)
+        {
+            return false;
+        }
+        count++;
+        armed = false;
+        if (target > 0 && count >= target)
+        {
+            targetReached = true;
+        }
+        return true;
+    }
+
+    /* The return to the start: depth at or below releaseMm arms the next rep. */
+    bool release(float depthMm, float releaseMm)
+    {
+        if (armed || !(depthMm <= releaseMm))
+        {
+            return false;
+        }
+        armed = true;
+        return true;
+    }
+
+    uint16_t remaining(uint16_t target) const
+    {
+        return (target > count) ? (uint16_t)(target - count) : 0;
+    }
+};
+
 /* ---------------------------------------------------------------- depth ---- */
 
 inline float depthFromRange(float rangeMm, float calibrationMm, float referenceMm, float maxDepthMm)

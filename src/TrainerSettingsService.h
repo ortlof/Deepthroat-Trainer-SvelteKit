@@ -46,6 +46,10 @@ public:
     float hold_seconds = 3.0f;     /* how long a goal must be held */
     bool auto_advance = false;     /* move to the next level after each hold */
 
+    /* --- play --- */
+    uint8_t play_mode = 0;         /* 0 = hold the goal, 1 = count reps */
+    uint16_t reps_target = 0;      /* reps: 0 = count up, N = count down from N */
+
     /* --- behaviour --- */
     float filter_tau_s = 0.20f;    /* sensor smoothing; 0 = raw */
     float session_stop_s = 8.0f;   /* no reading for this long ends a session */
@@ -66,6 +70,8 @@ public:
         root["level3_mm"] = settings.level3_mm;
         root["hold_seconds"] = settings.hold_seconds;
         root["auto_advance"] = settings.auto_advance;
+        root["play_mode"] = settings.play_mode;
+        root["reps_target"] = settings.reps_target;
         root["filter_tau_s"] = settings.filter_tau_s;
         root["session_stop_s"] = settings.session_stop_s;
         root["units"] = settings.units;
@@ -103,6 +109,12 @@ public:
 
         bool autoAdvance = root["auto_advance"] | settings.auto_advance;
 
+        int playMode = root["play_mode"] | (int)settings.play_mode;
+        playMode = constrain(playMode, 0, 1);
+
+        int repsTarget = root["reps_target"] | (int)settings.reps_target;
+        repsTarget = constrain(repsTarget, 0, 500);
+
         float tau = root["filter_tau_s"] | settings.filter_tau_s;
         tau = constrain(tau, 0.0f, 2.0f);
 
@@ -125,6 +137,7 @@ public:
             calibration == settings.calibration_mm && level1 == settings.level1_mm &&
             level2 == settings.level2_mm && level3 == settings.level3_mm &&
             hold == settings.hold_seconds && autoAdvance == settings.auto_advance &&
+            playMode == (int)settings.play_mode && repsTarget == (int)settings.reps_target &&
             tau == settings.filter_tau_s && stop == settings.session_stop_s &&
             units == (int)settings.units && brightness == (int)settings.display_brightness &&
             dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s)
@@ -140,6 +153,8 @@ public:
         settings.level3_mm = level3;
         settings.hold_seconds = hold;
         settings.auto_advance = autoAdvance;
+        settings.play_mode = (uint8_t)playMode;
+        settings.reps_target = (uint16_t)repsTarget;
         settings.filter_tau_s = tau;
         settings.session_stop_s = stop;
         settings.units = (uint8_t)units;

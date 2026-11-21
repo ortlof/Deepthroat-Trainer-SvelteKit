@@ -79,6 +79,12 @@ public:
     float sessionDeepSeconds = 0.0f;
     uint32_t sessionHolds = 0;
 
+    /* Rep mode */
+    uint8_t playMode = 0;   /* 0 = hold the goal, 1 = count reps */
+    uint16_t repCount = 0;  /* reps completed in this session */
+    uint16_t repTarget = 0; /* 0 = count up, N = count down from N */
+    bool repArmed = true;   /* the depth is back at the start: the next rep counts */
+
     /* --- the session before this one --- */
     float lastSessionPeakMm = 0.0f;
     float lastSessionAvgMm = 0.0f;
@@ -158,6 +164,11 @@ public:
         root["session_avg_mm"] = state.sessionAvgMm;
         root["session_deep_seconds"] = state.sessionDeepSeconds;
         root["session_holds"] = state.sessionHolds;
+        root["play_mode"] = state.playMode;
+        root["rep_count"] = state.repCount;
+        root["rep_target"] = state.repTarget;
+        root["rep_armed"] = state.repArmed;
+        root["reps_left"] = (state.repTarget > state.repCount) ? (state.repTarget - state.repCount) : 0;
         root["last_session_peak_mm"] = state.lastSessionPeakMm;
         root["last_session_avg_mm"] = state.lastSessionAvgMm;
         root["last_session_seconds"] = state.lastSessionSeconds;

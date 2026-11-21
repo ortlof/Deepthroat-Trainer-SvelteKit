@@ -110,6 +110,10 @@
 /* Failed reads in a row before the controller counts as asleep. One NACK is a
  * hiccup on a bus that the sensor shares. */
 #define TRAINER_TOUCH_FAIL_LIMIT 4
+
+/* Rep mode: the depth must come back to this before the next rep can count. "Fully
+ * back to 0" in practice, with room for the sensor's own noise floor. */
+#define TRAINER_REP_RELEASE_MM 8.0f
 /* A controller that went to sleep wakes on a touch, and a reset through the
  * expander wakes it as well. This is the fallback interval for a board whose
  * interrupt line is not connected; the expander answers, so it costs no NACK. */

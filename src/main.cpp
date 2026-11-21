@@ -74,6 +74,7 @@ VL6180Sensor sensor;
 
 static trainer::EmaFilter depthFilter;
 static trainer::HoldTracker holdTracker;
+
 static trainer::Session session;
 
 /* Cached copy of the settings, refreshed by the settings update handler.
@@ -89,6 +90,17 @@ static uint8_t settingsWriteIndex = 1;
 static inline const TrainerSettings &cfg()
 {
     return *settingsActive;
+}
+
+/* Rep mode: a rep is the goal held for the hold time, and the depth has to come back
+ * to the start before the next rep counts. The state machine itself is pure logic in
+ * trainer_math.h, so the host tests cover it. This sits after cfg() because the mode
+ * lives in the settings. */
+static trainer::RepCount repCounter;
+
+static bool playModeReps()
+{
+    return cfg().play_mode == 1;
 }
 
 static void publishSettings(const TrainerSettings &value)
@@ -504,6 +516,7 @@ static void startSession()
     holdCounted = false;
     lastValidSampleMs = millis();
     lastActivityMs = millis();
+    repCounter.reset(cfg().reps_target); /* rep mode starts a new set */
     setNotice("session started");
     esp32sveltekit.getNotificationService()->pushNotification("Session started", PUSHINFO);
     Serial.println("[trainer] session started");
@@ -693,6 +706,11 @@ static void buildSnapshot()
     screen.batteryV = readBatteryVolts();
     screen.unit = cfg().units;
 
+    /* Rep mode: the count replaces the level name on the panel. */
+    screen.repMode = playModeReps();
+    screen.repCount = repCounter.count;
+    screen.repTarget = cfg().reps_target;
+
     /* The footer is one short line; the panel has room for about 28 characters
      * at this size. The signal strength earns its place there: a weak link is the
      * usual reason this device is hard to reach. */
@@ -775,6 +793,10 @@ static void publishState()
         if (fabsf(state.sessionAvgMm - summary.averageMm()) >= 0.5f) { state.sessionAvgMm = summary.averageMm(); changed = true; }
         if (fabsf(state.sessionDeepSeconds - summary.deepSeconds) >= 0.2f) { state.sessionDeepSeconds = summary.deepSeconds; changed = true; }
         if (state.sessionHolds != summary.holds) { state.sessionHolds = summary.holds; changed = true; }
+        if (state.playMode != cfg().play_mode) { state.playMode = cfg().play_mode; changed = true; }
+        if (state.repTarget != cfg().reps_target) { state.repTarget = cfg().reps_target; changed = true; }
+        if (state.repCount != repCounter.count) { state.repCount = repCounter.count; changed = true; }
+        if (state.repArmed != repCounter.armed) { state.repArmed = repCounter.armed; changed = true; }
         if (fabsf(state.lastSessionPeakMm - lastSession.peakMm) >= 0.5f) { state.lastSessionPeakMm = lastSession.peakMm; changed = true; }
         if (fabsf(state.lastSessionAvgMm - lastSession.averageMm()) >= 0.5f) { state.lastSessionAvgMm = lastSession.averageMm(); changed = true; }
         if (fabsf(state.lastSessionSeconds - lastSession.elapsedSeconds) >= 0.2f) { state.lastSessionSeconds = lastSession.elapsedSeconds; changed = true; }
@@ -946,26 +968,68 @@ void trainerTask(void *pvParameters)
                     holdCounted = true;
                     holdTracker.acknowledge();
                     session.countHold(cfg().hold_seconds);
-                    char buffer[64];
-                    snprintf(buffer, sizeof(buffer), "%s held for %.1f s", trainer::levelName(lastGoalLevel),
-                             (double)cfg().hold_seconds);
-                    setNotice(buffer);
-                    esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
 
-                    if (cfg().auto_advance && lastGoalLevel < 3)
+                    if (playModeReps())
                     {
-                        lastGoalLevel++;
-                        holdTracker.reset(cfg().hold_seconds);
+                        /* One rep for each completed hold. The next rep can only count
+                         * after the depth came back to the start, which the release
+                         * check below arms, so this is a set of real repetitions and
+                         * not one long hold. */
+                        char buffer[64];
+                        const uint16_t target = cfg().reps_target;
+                        if (repCounter.countRep(target))
+                        {
+                            if (target > 0)
+                            {
+                                snprintf(buffer, sizeof(buffer), "rep %u of %u", (unsigned)repCounter.count, (unsigned)target);
+                            }
+                            else
+                            {
+                                snprintf(buffer, sizeof(buffer), "rep %u", (unsigned)repCounter.count);
+                            }
+                            setNotice(buffer);
+                            esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
+
+                            if (repCounter.targetReached)
+                            {
+                                snprintf(buffer, sizeof(buffer), "set done - %u reps", (unsigned)repCounter.count);
+                                setNotice(buffer);
+                                esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
+                                stopSession();
+                            }
+                        }
                         holdCounted = false;
                     }
-                    else if (!cfg().auto_advance)
+                    else
                     {
-                        holdCounted = false;
+                        char buffer[64];
+                        snprintf(buffer, sizeof(buffer), "%s held for %.1f s", trainer::levelName(lastGoalLevel),
+                                 (double)cfg().hold_seconds);
+                        setNotice(buffer);
+                        esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
+
+                        if (cfg().auto_advance && lastGoalLevel < 3)
+                        {
+                            lastGoalLevel++;
+                            holdTracker.reset(cfg().hold_seconds);
+                            holdCounted = false;
+                        }
+                        else if (!cfg().auto_advance)
+                        {
+                            holdCounted = false;
+                        }
                     }
                 }
                 else if (!atGoal)
                 {
                     holdCounted = false;
+                }
+
+                /* Rep mode: the return to the start arms the next rep. "Fully back to
+                 * 0" means the depth is at or below the release threshold again. */
+                if (playModeReps())
+                {
+                    repCounter.release(depthMm, TRAINER_REP_RELEASE_MM);
                 }
             }
             else

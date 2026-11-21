@@ -47,6 +47,11 @@ struct TrainerScreen
     float sessionAvgMm = 0.0f;
     uint32_t sessionHolds = 0;
 
+    /* Rep mode: the count takes the place of the level name on the panel. */
+    bool repMode = false;
+    uint16_t repCount = 0;
+    uint16_t repTarget = 0; /* 0 = count up */
+
     bool sensorOk = false;
     bool batteryKnown = false;
     float batteryV = 0.0f;
@@ -93,6 +98,7 @@ private:
     void drawLevelLine(const TrainerScreen &screen);
     void drawSessionLine(const TrainerScreen &screen);
     void drawHoldBar(const TrainerScreen &screen);
+    void drawBattery(bool known, float volts);
     void drawFooter(const TrainerScreen &screen);
 
     void eraseBox(int16_t cx, int16_t cy, int16_t halfWidth, int16_t halfHeight);
@@ -128,4 +134,5 @@ private:
     int16_t _lastPeakWidth = 0;
     float _lastHoldProgress = -1.0f;
     bool _lastSessionActive = false;
+    int8_t _batteryBucket = -2; /* -2 = nothing drawn, -1 = battery unknown */
 };

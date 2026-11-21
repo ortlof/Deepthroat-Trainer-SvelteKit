@@ -50,6 +50,11 @@
 		session_avg_mm: number;
 		session_deep_seconds: number;
 		session_holds: number;
+		play_mode: number;
+		rep_count: number;
+		rep_target: number;
+		rep_armed: boolean;
+		reps_left: number;
 		last_session_peak_mm: number;
 		last_session_avg_mm: number;
 		last_session_seconds: number;
@@ -80,6 +85,8 @@
 		level3_mm: number;
 		hold_seconds: number;
 		auto_advance: boolean;
+		play_mode: number;
+		reps_target: number;
 		filter_tau_s: number;
 		session_stop_s: number;
 		units: number;
@@ -121,6 +128,11 @@
 		session_avg_mm: 0,
 		session_deep_seconds: 0,
 		session_holds: 0,
+		play_mode: 0,
+		rep_count: 0,
+		rep_target: 0,
+		rep_armed: true,
+		reps_left: 0,
 		last_session_peak_mm: 0,
 		last_session_avg_mm: 0,
 		last_session_seconds: 0,
@@ -149,6 +161,8 @@
 		level3_mm: 100,
 		hold_seconds: 3,
 		auto_advance: false,
+		play_mode: 0,
+		reps_target: 0,
 		filter_tau_s: 0.2,
 		session_stop_s: 8,
 		units: 0,
@@ -353,9 +367,25 @@
 						{(state.session_active ? state.peak_mm : state.last_session_peak_mm).toFixed(0)} mm
 					</div>
 					<div class="stat-desc">
-						{state.session_active
-							? 'live'
-							: state.last_session_holds + ' holds'}
+						{state.session_active ? 'live' : state.last_session_holds + ' holds'}
+					</div>
+				</div>
+				<div class="stat">
+					<div class="stat-title">Reps</div>
+					<div class="stat-value text-2xl">
+						{state.rep_target > 0 ? state.reps_left : state.rep_count}
+					</div>
+					<div class="stat-desc">
+						{state.rep_target > 0
+							? state.rep_target + ' in the set, ' + state.reps_left + ' left'
+							: 'counting up, ' + state.rep_count + ' done'}
+					</div>
+					<div class="stat-desc">
+						{state.play_mode === 1
+							? state.rep_armed
+								? 'back at the start, ready'
+								: 'release to count the next one'
+							: 'hold mode: pick Reps in the settings'}
 					</div>
 				</div>
 			</div>
@@ -581,6 +611,41 @@
 				<span class="text-base">Climb a level after each completed hold</span>
 			</label>
 			<div class="label">Level 1 to 3, and it stops at 3.</div>
+		</div>
+
+		<div class="fieldset">
+			<label class="label" for="playmode">Play mode</label>
+			<select
+				id="playmode"
+				class="select select-bordered"
+				bind:value={settings.play_mode}
+				onchange={() => saveSettings({ play_mode: settings.play_mode })}
+			>
+				<option value={0}>Hold the goal</option>
+				<option value={1}>Count reps</option>
+			</select>
+			<div class="label">
+				Reps: hold the goal for the hold time, then come fully back to 0. Each return counts one rep.
+			</div>
+		</div>
+
+		<div class="fieldset">
+			<label class="label" for="repstarget">
+				Reps in the set ({settings.reps_target === 0 ? 'count up' : settings.reps_target + ', counting down'})
+			</label>
+			<input
+				id="repstarget"
+				type="range"
+				class="range range-primary"
+				min="0"
+				max="50"
+				step="1"
+				bind:value={settings.reps_target}
+				onchange={() => saveSettings({ reps_target: settings.reps_target })}
+			/>
+			<div class="label">
+				0 counts up without a target. A number counts down from it, and the session ends when the set is done.
+			</div>
 		</div>
 
 		<div class="fieldset">
