@@ -565,6 +565,26 @@ static void zeroReference()
 
 /* -------------------------------------------------------------- commands ---- */
 
+/* A client command arrives from the network task, and only its flags are read here -
+ * never a copy of the whole state. The framework calls this handler AFTER it has
+ * released the service lock, and TrainerState carries Arduino Strings that the
+ * trainer task writes at the same moment. A String shares its buffer by reference
+ * count, and that count is not thread safe, so copying the state here corrupts a
+ * buffer and the next free() aborts inside the heap:
+ *
+ *     free() -> poison_allocated_region -> esp_psram_check_ptr_addr   (assert)
+ *
+ * which is the crash that killed the httpd task twice. Every flag below is a plain
+ * value, so reading them one by one under the lock is safe. */
+struct TrainerCommand
+{
+    bool sessionStart;
+    bool sessionStop;
+    bool zero;
+    bool resetPeak;
+    int goalLevel;
+};
+
 static void applyTrainerStateToSession(const String &originId)
 {
     if (originId == TRAINER_DEVICE_ORIGIN)
@@ -572,9 +592,14 @@ static void applyTrainerStateToSession(const String &originId)
         return; /* telemetry push, not a command */
     }
 
-    TrainerState command;
+    TrainerCommand command = {};
     trainerStateService.read([&command](TrainerState &state)
-                             { command = state; });
+                             {
+        command.sessionStart = state.sessionStart;
+        command.sessionStop = state.sessionStop;
+        command.zero = state.zero;
+        command.resetPeak = state.resetPeak;
+        command.goalLevel = state.goalLevel; });
 
     if (command.sessionStart)
     {
@@ -763,13 +788,11 @@ static void publishState()
         if (state.touchPresent != touch.present()) { state.touchPresent = touch.present(); changed = true; }
         if (state.touchPresses != touch.presses()) { state.touchPresses = touch.presses(); changed = true; }
 
-        /* The raw answer is copied on every snapshot so a GET reads live values, but
-         * it only raises the changed flag when the bytes really differ: a push every
-         * 50 ms would flood the WebSocket. */
-        const uint8_t *touchBlock = touch.lastBlock();
-        char touchBlockText[20];
-        snprintf(touchBlockText, sizeof(touchBlockText), "%02X %02X %02X %02X %02X %02X",
-                 touchBlock[0], touchBlock[1], touchBlock[2], touchBlock[3], touchBlock[4], touchBlock[5]);
+        /* The raw register diagnostics are gone now that the controller is proven to
+         * work: four hex strings in every state push is work on the event path for
+         * nothing in normal use. What stays is what a fault needs - the chip id,
+         * whether it answers, and the two counters that separate a dead interrupt
+         * line from a controller that answers but reports no point. */
         state.touchChipId = touch.chipId();
         state.touchIrq = touch.irqLevel();
         state.touchAutoSleep = touch.autoSleepDisabled();
@@ -777,32 +800,8 @@ static void publishState()
         state.touchY = touch.y();
         state.touchReads = touch.reads();
         state.touchReadFailures = touch.readFailures();
-        if (strcmp(state.touchBlock, touchBlockText) != 0)
-        {
-            snprintf(state.touchBlock, sizeof(state.touchBlock), "%s", touchBlockText);
-            changed = true;
-        }
-        const uint8_t *touchDump = touch.dump();
-        snprintf(state.touchDump, sizeof(state.touchDump),
-                 "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-                 touchDump[0], touchDump[1], touchDump[2], touchDump[3], touchDump[4], touchDump[5], touchDump[6],
-                 touchDump[7], touchDump[8], touchDump[9], touchDump[10], touchDump[11], touchDump[12], touchDump[13],
-                 touchDump[14], touchDump[15]);
-        const uint8_t *touchChanged = touch.dumpChanged();
-        snprintf(state.touchDumpChanged, sizeof(state.touchDumpChanged),
-                 "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-                 touchChanged[0], touchChanged[1], touchChanged[2], touchChanged[3], touchChanged[4], touchChanged[5],
-                 touchChanged[6], touchChanged[7], touchChanged[8], touchChanged[9], touchChanged[10], touchChanged[11],
-                 touchChanged[12], touchChanged[13], touchChanged[14], touchChanged[15]);
-        state.touchDumpChanges = touch.dumpChanges();
         state.touchIrqPulses = touch.irqPulses();
         state.touchFrames = touch.touchFrames();
-        const uint8_t *touchFrame = touch.touchFrame();
-        snprintf(state.touchFrame, sizeof(state.touchFrame),
-                 "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-                 touchFrame[0], touchFrame[1], touchFrame[2], touchFrame[3], touchFrame[4], touchFrame[5],
-                 touchFrame[6], touchFrame[7], touchFrame[8], touchFrame[9], touchFrame[10], touchFrame[11],
-                 touchFrame[12]);
         if (fabsf(state.batteryV - battery) >= 0.05f) { state.batteryV = battery; changed = true; }
         if (!state.batteryKnown) { state.batteryKnown = true; changed = true; }
 
