@@ -271,11 +271,11 @@ static uint32_t lastPlainJoinMs = 0;
 
 static void tryPlainJoin()
 {
-    if (WiFi.status() == WL_CONNECTED || joinFailures < 3)
+    if (WiFi.status() == WL_CONNECTED || joinFailures < 2)
     {
         return;
     }
-    if ((millis() - lastPlainJoinMs) < 60000u)
+    if ((millis() - lastPlainJoinMs) < 30000u)
     {
         return;
     }
@@ -292,6 +292,11 @@ static void tryPlainJoin()
     const wifi_settings_t &network = stored.wifiSettings.front();
     Serial.printf("[wifi] %u joins failed, trying a plain join to \"%s\" without the pinned access point\n",
                   (unsigned)joinFailures, network.ssid.c_str());
+    /* disconnect without switching the radio off: this also cancels a scan that is
+     * stuck in the running state, which is what keeps the framework from finding a
+     * network again after a failed handshake. */
+    WiFi.disconnect(false, false);
+    delay(50);
     WiFi.begin(network.ssid.c_str(), network.password.c_str());
 }
 
@@ -313,8 +318,27 @@ static void logRadioStatus()
         Serial.printf("[wifi] %u stored network(s):", (unsigned)stored.wifiSettings.size());
         for (auto &network : stored.wifiSettings)
         {
-            Serial.printf(" \"%s\" (%u character password)", network.ssid.c_str(),
-                          (unsigned)network.password.length());
+            /* A password that was pasted with a trailing space, or with a character
+             * outside printable ASCII, fails the handshake and looks exactly like a
+             * wrong password. Report the shape, never the password. */
+            bool space = false;
+            bool control = false;
+            for (size_t i = 0; i < network.password.length(); i++)
+            {
+                const char c = network.password[i];
+                if (c == ' ')
+                {
+                    space = true;
+                }
+                if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E)
+                {
+                    control = true;
+                }
+            }
+            Serial.printf(" \"%s\" (%u character password%s%s)", network.ssid.c_str(),
+                          (unsigned)network.password.length(),
+                          space ? ", contains a space" : "",
+                          control ? ", contains a non-printable character" : "");
         }
         Serial.println();
     }
@@ -329,24 +353,14 @@ static void logRadioStatus()
 
     /* A negative return is a failed scan, not an empty band. Saying "nothing at
      * all" for a scan that never ran would send the reader after the antenna for
-     * no reason. The framework scans every five seconds while it cannot join, so
-     * two scans can collide; retry instead of reporting a failure that is only a
-     * collision. */
-    int found = -2;
-    for (int attempt = 0; attempt < 3; attempt++)
-    {
-        found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 300 /* ms per channel */);
-        if (found >= 0)
-        {
-            break;
-        }
-        Serial.printf("[wifi] scan returned %d (%s), trying again in 4 s\n", found,
-                      (found == -1) ? "still running" : "failed");
-        delay(4000);
-    }
+     * no reason. The framework scans every five seconds while it cannot join, so a
+     * second scan from here usually loses the race: one attempt, then report the
+     * state without the list. */
+    const int found = WiFi.scanNetworks(false /* async */, false /* show hidden */, false /* passive */, 300 /* ms per channel */);
     if (found < 0)
     {
-        Serial.printf("[wifi] the scan keeps failing with code %d; another scan is probably running\n", found);
+        Serial.printf("[wifi] not connected, and this scan returned %d (%s); the framework scans as well, so this is usually just a collision\n",
+                      found, (found == -1) ? "still running" : "failed");
         return;
     }
 

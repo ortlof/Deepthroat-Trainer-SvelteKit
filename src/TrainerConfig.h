@@ -83,13 +83,14 @@
 #define TRAINER_TOUCH_LONGPRESS_MS 1500
 /* While nothing touches the panel the interrupt line stays high and the I2C bus
  * stays quiet; this is the longest the driver goes without looking anyway, for a
- * board whose interrupt line is not connected. */
-#define TRAINER_TOUCH_IDLE_POLL_MS 300
-/* A controller that went to sleep answers again on a touch. While it is asleep the
- * interrupt line is the trigger; this is the slow fallback for a board whose
- * interrupt line is not connected. */
-#define TRAINER_TOUCH_ASLEEP_PROBE_MS 10000
-#define TRAINER_TOUCH_ASLEEP_BACKOFF_MS 10000
+ * board whose interrupt line is not connected. A read of a sleeping chip is a NACK
+ * and the core logs two lines for it, so it is deliberately slow. */
+#define TRAINER_TOUCH_IDLE_POLL_MS 30000
+/* A controller that went to sleep wakes on a touch, and a reset through the
+ * expander wakes it as well. This is the fallback interval for a board whose
+ * interrupt line is not connected; the expander answers, so it costs no NACK. */
+#define TRAINER_TOUCH_ASLEEP_PROBE_MS 60000
+#define TRAINER_TOUCH_ASLEEP_BACKOFF_MS 60000
 
 /* ---------------------------------------------------------------- battery -- */
 

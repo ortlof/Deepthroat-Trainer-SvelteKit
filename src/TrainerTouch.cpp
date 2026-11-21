@@ -111,14 +111,16 @@ void TrainerTouch::poll()
 
     if (_asleep)
     {
-        /* A sleeping controller wakes on a touch, and the interrupt line says so:
-         * a direct read is then enough. No reset is needed, and a reset on every
-         * try would only add bus traffic and lines to the log. */
+        /* Wake it the way that costs nothing on the bus: a reset through the
+         * expander. The expander always answers, while a sleeping controller does
+         * not, so resetting first and reading afterwards removes the NACK that a
+         * probe-first order produces on every wake. */
         const bool interrupt = (digitalRead(TRAINER_TOUCH_IRQ) == LOW);
         if (!interrupt && (int32_t)(now - _nextProbeMs) < 0)
         {
             return;
         }
+        reset();
         uint8_t id = 0;
         if (readRegisters(REG_CHIP_ID, &id, 1) && id != 0x00 && id != 0xFF)
         {
