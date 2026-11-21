@@ -814,6 +814,7 @@ void trainerTask(void *pvParameters)
     TickType_t lastWake = xTaskGetTickCount();
 
     uint32_t lastSampleUs = micros();
+    uint32_t lastLoopMs = millis();
     uint32_t tick = 0;
 
     for (;;)
@@ -825,6 +826,16 @@ void trainerTask(void *pvParameters)
             dt = TRAINER_MAX_STEP_SECONDS;
         }
         lastSampleUs = nowUs;
+
+        /* A blocked host is not a broken sensor: a WiFi scan or a panel repaint can
+         * hold this task for seconds, and the sensor must not conclude from that
+         * silence that continuous mode does not work. */
+        const uint32_t loopGapMs = millis() - lastLoopMs;
+        lastLoopMs = millis();
+        if (loopGapMs > 500)
+        {
+            sensor.accountHostGap(loopGapMs);
+        }
 
         /* The radio: the PHY settings need a started WiFi driver, and the framework
          * switches the radio off while it starts, so this retries until they take
@@ -919,10 +930,22 @@ void trainerTask(void *pvParameters)
             }
             else
             {
-                /* An unusable sample is not a distance. The last depth stays on
-                 * the gauge, but no time is added to the session. */
-                depthRawMm = 0.0f;
+                /* An unusable sample is not a distance: the raw value is marked as
+                 * absent instead of being reported as 0 mm, which would look like a
+                 * real reading. */
+                depthRawMm = -1.0f;
             }
+        }
+
+        /* A depth is a measurement, not a state. After a moment without a usable
+         * sample the readout falls back to 0, so the ring shows what the sensor
+         * really knows instead of freezing on a number from a minute ago. */
+        if (lastValidSampleMs != 0 && (millis() - lastValidSampleMs) > TRAINER_DEPTH_HOLD_MS)
+        {
+            lastValidSampleMs = 0;
+            depthMm = 0.0f;
+            depthRawMm = -1.0f;
+            depthFilter.reset();
         }
 
         /* A session ends by itself when nothing is in front of the sensor for

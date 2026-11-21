@@ -713,7 +713,9 @@
 		</div>
 		<div class="stat">
 			<div class="stat-title">Raw depth</div>
-			<div class="stat-value text-xl">{state.depth_raw_mm.toFixed(0)} mm</div>
+			<div class="stat-value text-xl">
+				{state.depth_raw_mm >= 0 ? state.depth_raw_mm.toFixed(0) + ' mm' : '--'}
+			</div>
 			<div class="stat-desc">filtered {state.depth_mm.toFixed(1)} mm</div>
 			<div class="stat-desc">reference {state.reference_mm.toFixed(0)} mm</div>
 		</div>

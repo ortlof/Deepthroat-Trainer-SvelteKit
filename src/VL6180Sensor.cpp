@@ -43,6 +43,18 @@ void VL6180Sensor::setSamplePeriodMs(uint16_t periodMs)
     }
 }
 
+void VL6180Sensor::accountHostGap(uint32_t gapMs)
+{
+    if (gapMs == 0)
+    {
+        return;
+    }
+    /* Both references move: the stall check compares against the sample time, and
+     * the single shot timeout compares against the measurement start. */
+    _lastSampleMs += gapMs;
+    _startedMs += gapMs;
+}
+
 bool VL6180Sensor::poll()
 {
     /* A bus read that fails is not a measurement: count it, and after a few in a

@@ -57,6 +57,25 @@
 #define TRAINER_TFT_VSYNC_BACK_PORCH 30
 #define TRAINER_TFT_PCLK_ACTIVE_NEG 1
 
+/* Pixel clock for the panel. The LilyGo example uses 8 MHz, and a slower scanout
+ * also keeps the PSRAM read pressure down. */
+#define TRAINER_TFT_PCLK_HZ 8000000
+
+/* The panel has exactly one framebuffer and it lives in PSRAM, where the RGB DMA
+ * reads it out continuously. Arduino_GFX configures no bounce buffer by default,
+ * which means every drawn region is copied into that same memory while it is on
+ * screen: that is the tearing this board shows. The driver's bounce buffer makes
+ * it copy during the vertical blanking instead, through a small buffer in internal
+ * RAM. The size must be a multiple of the panel width; 20 lines is 19 kB and it
+ * removes the visible tearing. Set to 0 to draw straight into PSRAM again. */
+#define TRAINER_TFT_BOUNCE_LINES 20
+
+/* Backlight PWM. A low PWM frequency can be visible as flicker through the
+ * switching converter that drives the LEDs, so this is well above what the eye
+ * follows, with 10 bit resolution for smooth dimming. */
+#define TRAINER_TFT_BL_PWM_HZ 20000
+#define TRAINER_TFT_BL_PWM_BITS 10
+
 /* Uncomment for the 2.8 inch T-RGB: only the panel init sequence differs. */
 /* #define TRAINER_PANEL_2_8_INCH 1 */
 
@@ -132,6 +151,11 @@
  * when the device is not connected, which costs the radio about a second, so it
  * happens once and only once. */
 #define TRAINER_WIFI_REPORT_MS 12000
+
+/* A depth reading is a measurement, not a state. When nothing is in front of the
+ * sensor, the last value is not the truth, so the readout falls back to 0 after
+ * this long instead of holding a number from a minute ago. */
+#define TRAINER_DEPTH_HOLD_MS 2000
 
 /* One status line every minute, so a serial terminal that was opened late still
  * shows what the board is doing. */

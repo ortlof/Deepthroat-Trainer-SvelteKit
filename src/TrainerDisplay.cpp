@@ -54,6 +54,40 @@
 
 /* ------------------------------------------------------------------- panel -- */
 
+/* The bounce buffer is given in pixels and must be a multiple of the panel width. */
+#define TRAINER_BOUNCE_PX ((size_t)(TRAINER_TFT_WIDTH * TRAINER_TFT_BOUNCE_LINES))
+
+static Arduino_ESP32RGBPanel *makePanel(size_t bouncePixels)
+{
+    return new Arduino_ESP32RGBPanel(
+        TRAINER_TFT_DE, TRAINER_TFT_VSYNC, TRAINER_TFT_HSYNC, TRAINER_TFT_PCLK,
+        TRAINER_TFT_R0, TRAINER_TFT_R1, TRAINER_TFT_R2, TRAINER_TFT_R3, TRAINER_TFT_R4,
+        TRAINER_TFT_G0, TRAINER_TFT_G1, TRAINER_TFT_G2, TRAINER_TFT_G3, TRAINER_TFT_G4, TRAINER_TFT_G5,
+        TRAINER_TFT_B0, TRAINER_TFT_B1, TRAINER_TFT_B2, TRAINER_TFT_B3, TRAINER_TFT_B4,
+        TRAINER_TFT_HSYNC_POLARITY, TRAINER_TFT_HSYNC_FRONT_PORCH, TRAINER_TFT_HSYNC_PULSE_WIDTH, TRAINER_TFT_HSYNC_BACK_PORCH,
+        TRAINER_TFT_VSYNC_POLARITY, TRAINER_TFT_VSYNC_FRONT_PORCH, TRAINER_TFT_VSYNC_PULSE_WIDTH, TRAINER_TFT_VSYNC_BACK_PORCH,
+        TRAINER_TFT_PCLK_ACTIVE_NEG,
+        TRAINER_TFT_PCLK_HZ /* prefer_speed: the vendor example value */,
+        false /* useBigEndian */,
+        0 /* de_idle_high */, 0 /* pclk_idle_high */,
+        bouncePixels);
+}
+
+static Arduino_RGB_Display *makeDisplay(Arduino_ESP32RGBPanel *panel, Arduino_XL9535SWSPI *bus)
+{
+#ifdef TRAINER_PANEL_2_8_INCH
+    return new Arduino_RGB_Display(TRAINER_TFT_WIDTH, TRAINER_TFT_HEIGHT, panel, 0 /* rotation */,
+                                   true /* auto flush */, bus, GFX_NOT_DEFINED /* RST */,
+                                   st7701_type20_init_operations, sizeof(st7701_type20_init_operations));
+#else
+    /* The 2.1 inch full circle board (st7701_type4). Half circle boards use
+     * another sequence; see the LilyGo repository for the pin table. */
+    return new Arduino_RGB_Display(TRAINER_TFT_WIDTH, TRAINER_TFT_HEIGHT, panel, 0 /* rotation */,
+                                   true /* auto flush */, bus, GFX_NOT_DEFINED /* RST */,
+                                   st7701_type4_init_operations, sizeof(st7701_type4_init_operations));
+#endif
+}
+
 bool TrainerDisplay::begin()
 {
     /* The XL9535 data bus talks over I2C, and it does not start Wire itself:
@@ -64,28 +98,21 @@ bool TrainerDisplay::begin()
                                    TRAINER_XL9535_PIN_POWER_EN, TRAINER_XL9535_PIN_CS,
                                    TRAINER_XL9535_PIN_SCLK, TRAINER_XL9535_PIN_MOSI);
 
-    _panel = new Arduino_ESP32RGBPanel(
-        TRAINER_TFT_DE, TRAINER_TFT_VSYNC, TRAINER_TFT_HSYNC, TRAINER_TFT_PCLK,
-        TRAINER_TFT_R0, TRAINER_TFT_R1, TRAINER_TFT_R2, TRAINER_TFT_R3, TRAINER_TFT_R4,
-        TRAINER_TFT_G0, TRAINER_TFT_G1, TRAINER_TFT_G2, TRAINER_TFT_G3, TRAINER_TFT_G4, TRAINER_TFT_G5,
-        TRAINER_TFT_B0, TRAINER_TFT_B1, TRAINER_TFT_B2, TRAINER_TFT_B3, TRAINER_TFT_B4,
-        TRAINER_TFT_HSYNC_POLARITY, TRAINER_TFT_HSYNC_FRONT_PORCH, TRAINER_TFT_HSYNC_PULSE_WIDTH, TRAINER_TFT_HSYNC_BACK_PORCH,
-        TRAINER_TFT_VSYNC_POLARITY, TRAINER_TFT_VSYNC_FRONT_PORCH, TRAINER_TFT_VSYNC_PULSE_WIDTH, TRAINER_TFT_VSYNC_BACK_PORCH,
-        TRAINER_TFT_PCLK_ACTIVE_NEG);
-
-#ifdef TRAINER_PANEL_2_8_INCH
-    _gfx = new Arduino_RGB_Display(TRAINER_TFT_WIDTH, TRAINER_TFT_HEIGHT, _panel, 0 /* rotation */,
-                                   true /* auto flush */, _bus, GFX_NOT_DEFINED /* RST */,
-                                   st7701_type20_init_operations, sizeof(st7701_type20_init_operations));
-#else
-    /* The 2.1 inch full circle board (st7701_type4). Half circle boards use
-     * another sequence; see the LilyGo repository for the pin table. */
-    _gfx = new Arduino_RGB_Display(TRAINER_TFT_WIDTH, TRAINER_TFT_HEIGHT, _panel, 0 /* rotation */,
-                                   true /* auto flush */, _bus, GFX_NOT_DEFINED /* RST */,
-                                   st7701_type4_init_operations, sizeof(st7701_type4_init_operations));
-#endif
-
+    _panel = makePanel(TRAINER_BOUNCE_PX);
+    _gfx = makeDisplay(_panel, _bus);
     _present = _gfx->begin();
+
+    if (!_present && TRAINER_TFT_BOUNCE_LINES > 0)
+    {
+        /* A driver that refuses the bounce buffer setting would leave the panel
+         * dark, and a dark panel is worse than a torn picture. Build the panel
+         * again without it. Both failed objects stay allocated: freeing a half
+         * built display is a bigger risk than losing a few hundred bytes. */
+        Serial.println("[display] panel refused the bounce buffer, retrying without it");
+        _panel = makePanel(0);
+        _gfx = makeDisplay(_panel, _bus);
+        _present = _gfx->begin();
+    }
     if (!_present)
     {
         Serial.println("[display] panel did not start");
@@ -97,10 +124,11 @@ bool TrainerDisplay::begin()
 
     /* Backlight: PWM so the brightness can be set, and the panel is dark until
      * the first frame is drawn. */
-    ledcAttach(TRAINER_TFT_BL, 5000, 8);
+    ledcAttach(TRAINER_TFT_BL, TRAINER_TFT_BL_PWM_HZ, TRAINER_TFT_BL_PWM_BITS);
     setBrightness(_brightness);
 
-    Serial.printf("[display] %dx%d ready\n", (int)_gfx->width(), (int)_gfx->height());
+    Serial.printf("[display] %dx%d ready, bounce buffer %u lines\n", (int)_gfx->width(), (int)_gfx->height(),
+                  (unsigned)TRAINER_TFT_BOUNCE_LINES);
     _valid = false;
     return true;
 }
@@ -112,7 +140,8 @@ void TrainerDisplay::setBrightness(uint8_t percent)
     {
         return;
     }
-    const uint32_t duty = (uint32_t)_brightness * 255 / 100;
+    const uint32_t steps = (1u << TRAINER_TFT_BL_PWM_BITS) - 1u;
+    const uint32_t duty = (uint32_t)_brightness * steps / 100u;
     ledcWrite(TRAINER_TFT_BL, duty);
 }
 

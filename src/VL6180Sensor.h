@@ -70,6 +70,11 @@ public:
 
     void setSamplePeriodMs(uint16_t periodMs);
 
+    /* A host task that was blocked (a panel repaint, a WiFi scan) is not a sensor
+     * that stopped delivering. Shift the stall reference by the gap so continuous
+     * mode is not abandoned because of it. */
+    void accountHostGap(uint32_t gapMs);
+
 private:
     bool detect();
     bool readResult();
