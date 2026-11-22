@@ -24,6 +24,15 @@
 
 #include "trainer_math.h"
 
+/* One field of the palette, so the ten colours need one loop instead of ten copies of the same
+ * six lines in both the JSON reader and the JSON updater. */
+struct ColourField
+{
+    const char *key;
+    char *value;
+    size_t size;
+};
+
 #define TRAINER_SETTINGS_ENDPOINT_PATH "/rest/trainerSettings"
 #define TRAINER_SETTINGS_FILE_PATH "/config/trainerSettings.json"
 
@@ -74,6 +83,20 @@ public:
     uint8_t display_brightness = 70; /* percent */
     uint8_t dim_brightness = 10;     /* percent while idle */
     uint16_t display_timeout_s = 0;  /* 0 = never dim */
+
+    /* The panel's palette, as "#rrggbb" so the web interface's colour pickers read and write it
+     * directly. The defaults are the colours the panel shipped with, converted field by field, so
+     * the look does not change until somebody chooses something. */
+    char colour_bg[8] = "#000000";
+    char colour_track[8] = "#202020";
+    char colour_accent[8] = "#00ffff";
+    char colour_zone[8] = "#00ff00";
+    char colour_done[8] = "#ffffff";
+    char colour_goal[8] = "#ffa500";
+    char colour_peak[8] = "#7b7d7b";
+    char colour_text[8] = "#ffffff";
+    char colour_dim[8] = "#9c9d9c";
+    char colour_warn[8] = "#ff0000";
 
     /* Where the visible round window sits inside the 480x480 framebuffer. Measured from a
      * video of this board: the window is about 15 px left and 9 px above the middle of the
@@ -136,6 +159,18 @@ public:
         root["display_timeout_s"] = settings.display_timeout_s;
         root["panel_centre_x"] = settings.panel_centre_x;
         root["panel_centre_y"] = settings.panel_centre_y;
+
+        /* the palette */
+        root["colour_bg"] = settings.colour_bg;
+        root["colour_track"] = settings.colour_track;
+        root["colour_accent"] = settings.colour_accent;
+        root["colour_zone"] = settings.colour_zone;
+        root["colour_done"] = settings.colour_done;
+        root["colour_goal"] = settings.colour_goal;
+        root["colour_peak"] = settings.colour_peak;
+        root["colour_text"] = settings.colour_text;
+        root["colour_dim"] = settings.colour_dim;
+        root["colour_warn"] = settings.colour_warn;
 
         /* the ladder builder and its saved shapes */
         root["ladder_base"] = settings.ladder_base;
@@ -245,6 +280,41 @@ public:
         int timeout = root["display_timeout_s"] | (int)settings.display_timeout_s;
         timeout = constrain(timeout, 0, 3600);
 
+        /* the palette: one loop, so ten colours need one copy of the same six lines */
+        ColourField colourFields[] = {
+            {"colour_bg", settings.colour_bg, sizeof(settings.colour_bg)},
+            {"colour_track", settings.colour_track, sizeof(settings.colour_track)},
+            {"colour_accent", settings.colour_accent, sizeof(settings.colour_accent)},
+            {"colour_zone", settings.colour_zone, sizeof(settings.colour_zone)},
+            {"colour_done", settings.colour_done, sizeof(settings.colour_done)},
+            {"colour_goal", settings.colour_goal, sizeof(settings.colour_goal)},
+            {"colour_peak", settings.colour_peak, sizeof(settings.colour_peak)},
+            {"colour_text", settings.colour_text, sizeof(settings.colour_text)},
+            {"colour_dim", settings.colour_dim, sizeof(settings.colour_dim)},
+            {"colour_warn", settings.colour_warn, sizeof(settings.colour_warn)},
+        };
+        bool coloursChanged = false;
+        for (ColourField &field : colourFields)
+        {
+            const char *wanted = root[field.key] | (const char *)field.value;
+            if (wanted == nullptr)
+            {
+                continue;
+            }
+            /* A "#rrggbb" that does not parse would leave that part of the panel black, so it is
+             * refused here and the stored colour is kept instead. */
+            uint16_t ignored = 0;
+            if (!trainer::parseHexColour(wanted, &ignored, 0))
+            {
+                continue;
+            }
+            if (strcmp(wanted, field.value) != 0)
+            {
+                coloursChanged = true;
+                snprintf(field.value, field.size, "%s", wanted);
+            }
+        }
+
         /* The panel centre is a nudge, not a coordinate: the whole panel is 480 wide, so an
          * offset of more than a few tens of pixels means something else is wrong. */
         int centreX = root["panel_centre_x"] | (int)settings.panel_centre_x;
@@ -296,7 +366,7 @@ public:
             units == (int)settings.units && brightness == (int)settings.display_brightness &&
             dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s &&
             centreX == (int)settings.panel_centre_x && centreY == (int)settings.panel_centre_y &&
-            !ladderChanged &&
+            !ladderChanged && !coloursChanged &&
             strcmp(praise, settings.praise) == 0)
         {
             return StateUpdateResult::UNCHANGED;

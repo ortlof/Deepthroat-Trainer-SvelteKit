@@ -115,6 +115,24 @@
  * back to 0" in practice, with room for the sensor's own noise floor. */
 #define TRAINER_REP_RELEASE_MM 8.0f
 
+/* -------------------------------------------------------------------- palette ----
+ * The panel's ten colours, as the settings hold them. They used to be compile-time constants in
+ * the display; they are the operator's now. The names in the display stay macros pointing into
+ * this struct, which is why not one draw call had to change when they stopped being constant. */
+struct TrainerColours
+{
+    uint16_t bg = 0x0000;
+    uint16_t track = 0x2104;
+    uint16_t accent = 0x07FF; /* cyan */
+    uint16_t zone = 0x07E0;   /* green: the goal is held */
+    uint16_t done = 0xFFFF;   /* white: hold complete */
+    uint16_t goal = 0xFD20;   /* orange tick: the goal of the selected level */
+    uint16_t peak = 0x7BEF;   /* light grey tick: the peak of the session */
+    uint16_t text = 0xFFFF;
+    uint16_t dim = 0x9CF3;
+    uint16_t warn = 0xF800;
+};
+
 /* Nothing running and nobody touching the panel for this long: stop ranging. The sensor costs
  * power, shares the one I2C bus with the touch controller and the expander, and has nothing to
  * say while no play is on. Any touch, and starting a play, wakes it again. */

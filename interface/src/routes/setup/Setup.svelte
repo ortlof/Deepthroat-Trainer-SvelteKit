@@ -7,6 +7,30 @@
 	import Sliders from '~icons/tabler/adjustments-horizontal';
 	import Ruler from '~icons/tabler/ruler-measure';
 	import Sparkles from '~icons/tabler/sparkles';
+	import Palette from '~icons/tabler/palette';
+
+	/* The panel's palette. The fallbacks are the same values the firmware ships with, so the page
+	 * shows the colours actually in use even before anything has been chosen. */
+	const colourFields = [
+		{ key: 'colour_bg', label: 'Background', fallback: '#000000' },
+		{ key: 'colour_track', label: 'Ring track', fallback: '#202020' },
+		{ key: 'colour_accent', label: 'Ring value', fallback: '#00ffff' },
+		{ key: 'colour_zone', label: 'In the band', fallback: '#00ff00' },
+		{ key: 'colour_done', label: 'Hold complete', fallback: '#ffffff' },
+		{ key: 'colour_goal', label: 'Goal tick', fallback: '#ffa500' },
+		{ key: 'colour_peak', label: 'Peak tick', fallback: '#7b7d7b' },
+		{ key: 'colour_text', label: 'Text', fallback: '#ffffff' },
+		{ key: 'colour_dim', label: 'Dim text', fallback: '#9c9d9c' },
+		{ key: 'colour_warn', label: 'Warning', fallback: '#ff0000' }
+	];
+
+	function resetColours() {
+		const patch: Record<string, string> = {};
+		for (const field of colourFields) {
+			patch[field.key] = field.fallback;
+		}
+		saveSettings(patch as Partial<TrainerSettings>);
+	}
 
 	interface TrainerSettings {
 		reference_mm: number;
@@ -317,5 +341,39 @@
 	</div>
 	<div class="label">
 		The praise animation says "{settings.praise}" and the count of the last set.
+	</div>
+</SettingsCard>
+
+<SettingsCard collapsible={false} open={false}>
+	{#snippet icon()}
+		<Palette class="mr-2 h-6 w-6 shrink-0 self-end" />
+	{/snippet}
+	{#snippet title()}
+		<span>Panel colours</span>
+	{/snippet}
+
+	<div class="label">
+		What the trainer's panel draws with. A change repaints the panel at once, so the picker and
+		the panel do not sit out of step.
+	</div>
+
+	<div class="grid grid-cols-1 gap-x-8 gap-y-2 md:grid-cols-2">
+		{#each colourFields as field (field.key)}
+			<label class="label flex cursor-pointer items-center gap-3" for={field.key}>
+				<input
+					id={field.key}
+					type="color"
+					class="h-9 w-14 cursor-pointer rounded border border-base-300 bg-transparent p-0"
+					value={String(settings[field.key] ?? field.fallback)}
+					onchange={(event) =>
+						saveSettings({ [field.key]: event.currentTarget.value } as Partial<TrainerSettings>)}
+				/>
+				<span>{field.label}</span>
+			</label>
+		{/each}
+	</div>
+
+	<div class="mt-3">
+		<button class="btn btn-sm" onclick={resetColours}>RESET TO DEFAULTS</button>
 	</div>
 </SettingsCard>

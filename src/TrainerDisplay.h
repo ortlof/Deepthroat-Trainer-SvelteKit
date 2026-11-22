@@ -108,6 +108,10 @@ public:
     void setBrightness(uint8_t percent);
     uint8_t brightness() const { return _brightness; }
 
+    /* The palette, from the settings. A change wipes the panel and repaints it in the new
+     * colours on the next render(). */
+    void setColours(const TrainerColours &colours);
+
     /* Draws the frame. Only the parts that changed since the previous call are
      * painted. */
     void render(const TrainerScreen &screen);

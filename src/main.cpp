@@ -135,6 +135,36 @@ static TaskHandle_t displayTaskHandle = nullptr;
 
 /* ------------------------------------------------------------ prototypes ---- */
 
+/* The palette, out of the settings and into the display. A change repaints the whole panel in the
+ * new colours, which is what makes a colour picker in the browser land on the trainer. */
+static TrainerColours g_appliedColours;
+static bool g_coloursApplied = false;
+
+static void applyColours()
+{
+    /* The compiled-in values are the fallback, so an empty or unparseable string leaves that part
+     * of the panel looking the way it did rather than turning it black. */
+    const TrainerColours fallback;
+    TrainerColours wanted = fallback;
+    trainer::parseHexColour(cfg().colour_bg, &wanted.bg, fallback.bg);
+    trainer::parseHexColour(cfg().colour_track, &wanted.track, fallback.track);
+    trainer::parseHexColour(cfg().colour_accent, &wanted.accent, fallback.accent);
+    trainer::parseHexColour(cfg().colour_zone, &wanted.zone, fallback.zone);
+    trainer::parseHexColour(cfg().colour_done, &wanted.done, fallback.done);
+    trainer::parseHexColour(cfg().colour_goal, &wanted.goal, fallback.goal);
+    trainer::parseHexColour(cfg().colour_peak, &wanted.peak, fallback.peak);
+    trainer::parseHexColour(cfg().colour_text, &wanted.text, fallback.text);
+    trainer::parseHexColour(cfg().colour_dim, &wanted.dim, fallback.dim);
+    trainer::parseHexColour(cfg().colour_warn, &wanted.warn, fallback.warn);
+
+    if (!g_coloursApplied || memcmp(&wanted, &g_appliedColours, sizeof(wanted)) != 0)
+    {
+        g_appliedColours = wanted;
+        g_coloursApplied = true;
+        display.setColours(wanted);
+    }
+}
+
 static void refreshSettings(bool invalidateDisplay);
 static void applyTrainerStateToSession(const String &originId);
 static void startSession();
@@ -1870,11 +1900,12 @@ void setup()
 
     /* The cached copy must exist before the tasks start. */
     refreshSettings(true);
+    applyColours();
 
     /* A settings change takes effect at once: brightness, filter and hold target
      * need no restart, and a unit change needs a full repaint. */
     trainerSettingsService.addUpdateHandler([&](const String &originId)
-                                            { refreshSettings(false); },
+                                            { refreshSettings(false); applyColours(); },
                                             false);
 
     /* Command applier: runs on every state change a client caused. */

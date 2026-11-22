@@ -480,6 +480,35 @@ int main()
         expectInt("and so does a negative request", ladderBuild(0.0f, 20.0f, 137.0f, lows, highs, -3), 6);
     }
 
+    /* ---- colours: the web sends "#rrggbb", the panel wants RGB565 ---------------- */
+    {
+        uint16_t out = 0;
+        char text[16];
+        expectInt("green parses", parseHexColour("#00ff00", &out, 0) ? 1 : 0, 1);
+        expectInt("and lands in the middle field", (int)out, 0x07E0);
+        expectInt("white parses", parseHexColour("#ffffff", &out, 0) ? 1 : 0, 1);
+        expectInt("and is full scale everywhere", (int)out, 0xFFFF);
+        expectInt("black parses", parseHexColour("#000000", &out, 0x1234) ? 1 : 0, 1);
+        expectInt("and is zero", (int)out, 0);
+        expectInt("upper case parses too", parseHexColour("#0A0B0C", &out, 0) ? 1 : 0, 1);
+        expectInt("a short string is refused", parseHexColour("#abc", &out, 0x1234) ? 1 : 0, 0);
+        expectInt("and leaves the fallback", (int)out, 0x1234);
+        expectInt("a missing hash is refused", parseHexColour("00ff00", &out, 0) ? 1 : 0, 0);
+        expectInt("a null is refused", parseHexColour(nullptr, &out, 0) ? 1 : 0, 0);
+        expectInt("a non hex digit is refused", parseHexColour("#00ff0g", &out, 0) ? 1 : 0, 0);
+        expectInt("a trailing character is refused", parseHexColour("#00ff00 ", &out, 0) ? 1 : 0, 0);
+
+        formatHexColour(0x07E0, text, sizeof(text));
+        expectInt("green formats back", strcmp(text, "#00ff00") == 0 ? 1 : 0, 1);
+        formatHexColour(0xFFFF, text, sizeof(text));
+        expectInt("white formats back", strcmp(text, "#ffffff") == 0 ? 1 : 0, 1);
+        formatHexColour(0x0000, text, sizeof(text));
+        expectInt("black formats back", strcmp(text, "#000000") == 0 ? 1 : 0, 1);
+        formatHexColour(0xFD20, text, sizeof(text));
+        parseHexColour(text, &out, 0);
+        expectInt("orange survives a round trip", (int)out, 0xFD20);
+    }
+
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);
     return failures == 0 ? 0 : 1;
 }

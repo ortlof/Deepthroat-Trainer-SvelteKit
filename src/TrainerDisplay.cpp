@@ -71,16 +71,32 @@ static bool g_centreChanged = false;
 
 /* ------------------------------------------------------------------ colours -- */
 
-#define COL_BG 0x0000
-#define COL_TRACK 0x2104
-#define COL_ACCENT 0x07FF  /* cyan */
-#define COL_ZONE 0x07E0    /* green: the goal is held */
-#define COL_DONE 0xFFFF    /* white: hold complete */
-#define COL_GOAL 0xFD20    /* orange tick: the goal of the selected level */
-#define COL_PEAK 0x7BEF    /* light grey tick: the peak of the session */
-#define COL_TEXT 0xFFFF
-#define COL_DIM 0x9CF3
-#define COL_WARN 0xF800
+/* The palette, from the settings. A variable rather than ten constants, because the operator
+ * chooses these now; the names stay macros so every draw call in this file reads the same. */
+static TrainerColours g_colours;
+
+#define COL_BG g_colours.bg
+#define COL_TRACK g_colours.track
+#define COL_ACCENT g_colours.accent
+#define COL_ZONE g_colours.zone
+#define COL_DONE g_colours.done
+#define COL_GOAL g_colours.goal
+#define COL_PEAK g_colours.peak
+#define COL_TEXT g_colours.text
+#define COL_DIM g_colours.dim
+#define COL_WARN g_colours.warn
+
+void TrainerDisplay::setColours(const TrainerColours &colours)
+{
+    g_colours = colours;
+    /* Everything on the panel was drawn in the old palette, so none of it is valid any more.
+     * drawStatic() is exactly the reset this needs: it wipes the screen and empties every cache,
+     * so the next render() repaints the lot in the new colours. */
+    if (_gfx != nullptr)
+    {
+        drawStatic();
+    }
+}
 
 /* ------------------------------------------------------------------- panel -- */
 

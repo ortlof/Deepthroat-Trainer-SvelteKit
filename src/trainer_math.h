@@ -80,6 +80,71 @@ struct RepCount
     }
 };
 
+/* --------------------------------------------------------------- colours ---- */
+
+/* The panel takes RGB565 and the web interface's colour pickers speak "#rrggbb", so both
+ * directions live here, host tested, instead of being scattered through the display. */
+inline bool parseHexColour(const char *text, uint16_t *out, uint16_t fallback)
+{
+    if (text == nullptr || out == nullptr)
+    {
+        return false;
+    }
+    size_t len = 0;
+    while (text[len] != '\0' && len < 8)
+    {
+        len++;
+    }
+    if (len != 7 || text[0] != '#')
+    {
+        *out = fallback;
+        return false;
+    }
+
+    uint32_t value = 0;
+    for (size_t i = 1; i < 7; ++i)
+    {
+        const char c = text[i];
+        uint32_t digit = 0;
+        if (c >= '0' && c <= '9')
+        {
+            digit = (uint32_t)(c - '0');
+        }
+        else if (c >= 'a' && c <= 'f')
+        {
+            digit = (uint32_t)(c - 'a' + 10);
+        }
+        else if (c >= 'A' && c <= 'F')
+        {
+            digit = (uint32_t)(c - 'A' + 10);
+        }
+        else
+        {
+            *out = fallback;
+            return false;
+        }
+        value = (value << 4) | digit;
+    }
+
+    /* Round to the nearest step of the panel's 5/6/5 fields rather than truncating: truncating
+     * 0xFF to five bits costs a visible amount of every bright colour. */
+    const uint32_t r = (value >> 16) & 0xFFu;
+    const uint32_t g = (value >> 8) & 0xFFu;
+    const uint32_t b = value & 0xFFu;
+    *out = (uint16_t)(((r * 31u + 127u) / 255u) << 11 | ((g * 63u + 127u) / 255u) << 5 |
+                      ((b * 31u + 127u) / 255u));
+    return true;
+}
+
+/* Back to "#rrggbb", so a colour picker opens on the colour the panel is actually using. */
+inline void formatHexColour(uint16_t colour, char *out, size_t size)
+{
+    const uint32_t r = ((colour >> 11) & 0x1Fu) * 255u / 31u;
+    const uint32_t g = ((colour >> 5) & 0x3Fu) * 255u / 63u;
+    const uint32_t b = (colour & 0x1Fu) * 255u / 31u;
+    snprintf(out, size, "#%02x%02x%02x", (unsigned)r, (unsigned)g, (unsigned)b);
+}
+
 /* ---------------------------------------------------------------- depth ---- */
 
 inline float depthFromRange(float rangeMm, float calibrationMm, float referenceMm, float maxDepthMm)
