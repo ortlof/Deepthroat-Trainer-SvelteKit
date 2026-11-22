@@ -119,6 +119,7 @@
 		level: 0,
 		level_name: 'Warm up',
 		goal_mm: 0,
+		goal_limit_mm: 0,
 		in_zone: false,
 		hold_complete: false,
 		hold_progress: 0,
@@ -297,7 +298,7 @@
 
 	<div class="flex w-full flex-col items-center gap-6 md:flex-row md:items-start">
 		<!-- The same ring the panel draws: 270 degrees, peak and goal marked. -->
-		<svg viewBox="0 0 220 220" class="h-56 w-56 shrink-0">
+		<svg viewBox="0 0 220 220" class="h-auto w-full max-w-64 shrink-0">
 			<g transform="rotate(135 110 110)">
 				<circle
 					cx="110"

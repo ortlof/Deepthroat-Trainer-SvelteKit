@@ -20,3 +20,42 @@
     border-color: var(--color-gray-200, currentcolor);
   }
 }
+
+/*
+  Layout on a phone.
+
+  daisyUI's .label is `white-space: nowrap`, which is fine for a two-word form label and
+  wrong for every description in this interface: it forces each sentence onto one line, so a
+  card becomes as wide as its longest sentence and the content is clipped on a phone. The
+  labels here wrap, and the two rules below keep flex and grid children from refusing to
+  shrink below their content (the default min-width: auto), which is the other half of the
+  same problem.
+*/
+.label {
+  white-space: normal;
+}
+
+.fieldset,
+.grid > *,
+.flex-col > * {
+  min-width: 0;
+}
+
+/*
+  daisyUI's horizontal stats are one row that does not shrink, so the fourth stat is clipped
+  in the "Sensor and board" card. The class on the element is the responsive variant
+  (sm:stats-horizontal), so this has to outrank that utility: two across, four when there is
+  really room.
+*/
+@media (min-width: 640px) {
+  .stats.stats-vertical {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .stats.stats-vertical {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
