@@ -77,15 +77,60 @@ int main()
     expectNear("gauge with no scale is 0", gaugeFraction(50.0f, 0.0f), 0.0f);
 
     /* ---- levels ---------------------------------------------------------- */
-    expectInt("below level 1", levelForDepth(10.0f, 40.0f, 70.0f, 100.0f), 0);
-    expectInt("exactly level 1", levelForDepth(40.0f, 40.0f, 70.0f, 100.0f), 1);
-    expectInt("level 2", levelForDepth(85.0f, 40.0f, 70.0f, 100.0f), 2);
-    expectInt("level 3", levelForDepth(120.0f, 40.0f, 70.0f, 100.0f), 3);
-    expectInt("no goals configured stays level 0", levelForDepth(120.0f, 0.0f, 0.0f, 0.0f), 0);
-    expectStr("level 0 name", levelName(0), "Warm up");
-    expectStr("level 2 name", levelName(2), "Level 2");
-    expectNear("goal of level 3", goalForLevel(3, 40.0f, 70.0f, 100.0f), 100.0f);
-    expectNear("goal of free play is 0", goalForLevel(0, 40.0f, 70.0f, 100.0f), 0.0f);
+    {
+        const float lows[kLevelCount] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f};
+        const float highs[kLevelCount] = {60.0f, 80.0f, 100.0f, 120.0f, 140.0f};
+
+        expectInt("below level 1", levelForDepth(10.0f, lows), 0);
+        expectInt("exactly level 1", levelForDepth(40.0f, lows), 1);
+        expectInt("level 2", levelForDepth(65.0f, lows), 2);
+        expectInt("level 3", levelForDepth(85.0f, lows), 3);
+        expectInt("level 4", levelForDepth(105.0f, lows), 4);
+        expectInt("level 5", levelForDepth(195.0f, lows), 5);
+
+        const float none[kLevelCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        expectInt("no goals configured stays level 0", levelForDepth(120.0f, none), 0);
+
+        expectStr("level 0 name", levelName(0), "Warm up");
+        expectStr("level 2 name", levelName(2), "Level 2");
+        expectStr("level 4 name", levelName(4), "Level 4");
+        expectStr("level 5 name", levelName(5), "Level 5");
+        expectNear("goal of level 3", goalForLevel(3, lows), 80.0f);
+        expectNear("goal of level 5", goalForLevel(5, lows), 120.0f);
+        expectNear("goal of free play is 0", goalForLevel(0, lows), 0.0f);
+        expectNear("a level past the last one has no goal", goalForLevel(6, lows), 0.0f);
+
+        /* The band is the point of this: level 1 counts from 40 to 60 and no further. */
+        const LevelBand band = bandForLevel(1, lows, highs);
+        expectNear("the band starts at the level", band.low, 40.0f);
+        expectNear("the band ends at the upper limit", band.high, 60.0f);
+        expectTrue("just below the level is out", !inBand(39.9f, band));
+        expectTrue("the level itself is in", inBand(40.0f, band));
+        expectTrue("the middle of the band is in", inBand(50.0f, band));
+        expectTrue("the upper limit itself is in", inBand(60.0f, band));
+        expectTrue("past the upper limit is OUT, which is the whole point", !inBand(60.1f, band));
+        expectTrue("much deeper is out too", !inBand(120.0f, band));
+
+        expectNear("progress at the bottom of the band", bandProgress(40.0f, band), 0.0f);
+        expectNear("progress in the middle", bandProgress(50.0f, band), 0.5f);
+        expectNear("progress at the top", bandProgress(60.0f, band), 1.0f);
+        expectNear("progress past the top is clamped", bandProgress(90.0f, band), 1.0f);
+
+        /* A band whose upper limit is below its level would be impossible to complete, so
+         * the band builder refuses it and the free-play level has no band at all. */
+        const float sillyHigh[kLevelCount] = {10.0f, 80.0f, 100.0f, 120.0f, 140.0f};
+        expectNear("an upper limit under the level is lifted to the level",
+                   bandForLevel(1, lows, sillyHigh).high, 40.0f);
+        expectTrue("free play has no band, so nothing counts", !inBand(50.0f, bandForLevel(0, lows, highs)));
+
+        /* A level saved before the upper limits existed has its limit equal to its depth.
+         * With a minimum width that becomes a target that can actually be held. */
+        const float flatHigh[kLevelCount] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f};
+        const LevelBand widened = bandForLevel(1, lows, flatHigh, 10.0f);
+        expectNear("a flat band is widened to the minimum", widened.high, 50.0f);
+        expectTrue("and a depth in the widened part counts", inBand(45.0f, widened));
+        expectTrue("while a depth past it still does not", !inBand(55.0f, widened));
+    }
 
     /* ---- filter ---------------------------------------------------------- */
     {
@@ -212,47 +257,36 @@ int main()
         expectNear("progress is full at the end", fxProgress(3000, 1000, 2000), 1.0f, 0.001f);
         expectNear("progress is clamped past the end", fxProgress(90000, 1000, 2000), 1.0f, 0.001f);
 
-        /* The celebration arc: it must never leave the ring band, and the piece that wraps
-         * round has to be the right length. */
+        /* The burst: the first ring leaves the middle at once, the later ones wait their
+         * turn, and no ring ever shrinks - that is what makes it read as a burst. */
+        expectNear("ring 0 starts at the middle", (float)fxRingRadius(0, 0.0f, 200), 0.0f, 0.5f);
+        expectTrue("ring 0 has not started at exactly the start", !fxRingStarted(0, 0.0f));
+        expectTrue("ring 0 is under way almost at once", fxRingStarted(0, 0.01f));
+        expectNear("ring 0 reaches the rim", (float)fxRingRadius(0, 0.6f, 200), 200.0f, 0.5f);
+        expectNear("ring 1 waits its turn", (float)fxRingRadius(1, 0.0f, 200), 0.0f, 0.5f);
+        expectTrue("ring 1 has not started yet", !fxRingStarted(1, 0.0f));
+        expectTrue("ring 2 is still inside when ring 0 is out",
+                   fxRingRadius(2, 0.6f, 200) < fxRingRadius(0, 0.6f, 200));
+        expectNear("ring 2 reaches the rim by the end", (float)fxRingRadius(2, 1.0f, 200), 200.0f, 0.5f);
+        expectNear("ring 3 is the rim at the end too", (float)fxRingRadius(3, 1.0f, 200), 200.0f, 0.5f);
+
+        bool monotonic = true, allStarted = true;
+        for (float p = 0.0f; p <= 1.0f; p += 0.05f)
         {
-            const float ringStart = 135.0f, ringEnd = 405.0f;
-            float a1, a2, b1, b2;
-
-            fxSweepSegments(0.0f, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
-            expectNear("the arc starts at the ring start", a1, 135.0f, 0.001f);
-            expectNear("the arc is as long as asked", a2 - a1, 74.0f, 0.001f);
-            expectTrue("no wrap yet", b1 == b2);
-
-            fxSweepSegments(200.0f, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
-            expectNear("a late arc starts 200 degrees in", a1, 335.0f, 0.001f);
-            expectNear("and runs to the end of the ring", a2, 405.0f, 0.001f);
-            expectNear("the wrapped piece starts at the ring start", b1, 135.0f, 0.001f);
-            expectNear("with the remaining 4 degrees", b2 - b1, 4.0f, 0.001f);
-
-            /* Whatever the offset, the two pieces together are exactly one arc, and they
-             * stay inside the ring. This is the invariant that keeps a stray segment off
-             * the panel. */
-            bool lengthHeld = true, insideHeld = true;
-            for (float off = 0.0f; off < 1080.0f; off += 7.0f)
+            for (uint8_t ring = 0; ring < 4; ring++)
             {
-                fxSweepSegments(off, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
-                const float total = (a2 - a1) + (b2 - b1);
-                if (total < 73.9f || total > 74.1f)
+                if (fxRingRadius(ring, p + 0.05f, 200) < fxRingRadius(ring, p, 200))
                 {
-                    lengthHeld = false;
+                    monotonic = false;
                 }
-                if (a1 < ringStart - 0.01f || a2 > ringEnd + 0.01f ||
-                    b1 < ringStart - 0.01f || b2 > ringEnd + 0.01f)
+                if (p > 0.5f && !fxRingStarted(ring, p))
                 {
-                    insideHeld = false;
+                    allStarted = false;
                 }
             }
-            expectTrue("the arc never changes length, wrap or not", lengthHeld);
-            expectTrue("the arc never leaves the ring", insideHeld);
-
-            fxSweepSegments(1000.0f, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
-            expectTrue("a big offset wraps round and keeps going", a1 >= ringStart && a2 <= ringEnd);
         }
+        expectTrue("a ring never shrinks", monotonic);
+        expectTrue("every ring is under way by half time", allStarted);
 
         expectTrue("the pulse is off in the first period", !fxPulseOn(100, 480));
         expectTrue("the pulse is on in the second one", fxPulseOn(600, 480));

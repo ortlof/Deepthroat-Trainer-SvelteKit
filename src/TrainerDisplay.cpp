@@ -47,9 +47,9 @@ static bool g_centreChanged = false;
 #define FOOTER_CY 392
 #define HEADER_CY 100
 
-/* The box the animation's words are drawn in. Its corners stay inside the ring band
- * (sqrt(150^2 + 100^2) = 180, and the band starts at 184), so clearing it can never rub out
- * the travelling arc. */
+/* The box the animation's words are drawn in. It is cleared on every frame of an animation,
+ * and because the panel's background is the same black that costs nothing to look at: the
+ * rings simply pass behind the words. */
 #define FX_TEXT_HALF_W 150
 #define FX_TEXT_HALF_H 100
 
@@ -227,6 +227,7 @@ void TrainerDisplay::drawStatic()
     _lastHoldProgress = -1.0f;
     _drawnGauge = 0.0f;
     _drawnGoalGauge = -1.0f;
+    _drawnLimitGauge = -1.0f;
     _drawnPeakGauge = -1.0f;
     _drawnInZone = false;
     _lastSessionActive = false;
@@ -269,7 +270,7 @@ void TrainerDisplay::drawGauge(float gauge, bool inZone)
     _drawnGauge = target;
 }
 
-void TrainerDisplay::drawTicks(float goalGauge, float peakGauge)
+void TrainerDisplay::drawTicks(float goalGauge, float limitGauge, float peakGauge)
 {
     const bool goalValid = goalGauge > 0.0f && goalGauge <= 1.0f;
     if (goalValid != (_drawnGoalGauge > 0.0f) || (goalValid && fabsf(goalGauge - _drawnGoalGauge) > 0.001f))
@@ -285,6 +286,24 @@ void TrainerDisplay::drawTicks(float goalGauge, float peakGauge)
             _gfx->fillArc(CX, CY, TICK_GOAL_R_OUT, TICK_GOAL_R_IN, angle - 1.4f, angle + 1.4f, COL_GOAL);
         }
         _drawnGoalGauge = goalValid ? goalGauge : -1.0f;
+    }
+
+    /* The top of the goal's band. It is dimmer and thinner than the goal mark: it says where
+     * the target stops, so a depth past it is visibly past the target and not a better hold. */
+    const bool limitValid = limitGauge > 0.0f && limitGauge <= 1.0f;
+    if (limitValid != (_drawnLimitGauge > 0.0f) || (limitValid && fabsf(limitGauge - _drawnLimitGauge) > 0.001f))
+    {
+        if (_drawnLimitGauge > 0.0f)
+        {
+            const float oldAngle = GAUGE_START + GAUGE_SWEEP * _drawnLimitGauge;
+            _gfx->fillArc(CX, CY, TICK_GOAL_R_OUT, TICK_GOAL_R_IN, oldAngle - 0.8f, oldAngle + 0.8f, COL_BG);
+        }
+        if (limitValid)
+        {
+            const float angle = GAUGE_START + GAUGE_SWEEP * limitGauge;
+            _gfx->fillArc(CX, CY, TICK_GOAL_R_OUT, TICK_GOAL_R_IN, angle - 0.8f, angle + 0.8f, COL_DIM);
+        }
+        _drawnLimitGauge = limitValid ? limitGauge : -1.0f;
     }
 
     const bool peakValid = peakGauge > 0.0f && peakGauge <= 1.0f;
@@ -381,7 +400,8 @@ void TrainerDisplay::drawLevelLine(const TrainerScreen &screen)
     }
     else
     {
-        snprintf(buffer, sizeof(buffer), "goal %s (%d mm)", trainer::levelName(screen.goalLevel), (int)lroundf(screen.goalMm));
+        snprintf(buffer, sizeof(buffer), "%s: %d-%d mm", trainer::levelName(screen.goalLevel),
+                 (int)lroundf(screen.goalMm), (int)lroundf(screen.goalLimitMm));
     }
 
     if (_lastLevelLine != buffer)
@@ -527,51 +547,54 @@ void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, flo
     const bool praise = (screen.fx == 2);
     const uint16_t accent = praise ? COL_DONE : COL_ACCENT;
 
-    /* Once, when the animation starts: clear the panel and lay down the ring the arc runs
-     * on. Nothing clears the whole screen again after this, because this panel scans its
-     * framebuffer out while it is written and a full clear every frame is what made the
-     * whole panel flash. */
+    /* Once, when the animation starts: clear the panel. Nothing clears the whole screen
+     * again after this, because this panel scans its framebuffer out while it is written
+     * and a full clear every frame is exactly what made the panel flash. */
     if (!_fxCleared)
     {
         _gfx->fillScreen(COL_BG);
-        _gfx->fillArc(CX, CY, R_OUT, R_IN, GAUGE_START, GAUGE_START + GAUGE_SWEEP - ANGLE_EPSILON, COL_TRACK);
-        _fxSweepFromA = _fxSweepToA = -1.0f;
-        _fxSweepFromB = _fxSweepToB = -1.0f;
-        _fxTextDrawn[0] = '\0';
-        _fxPulse = -1;
+        for (uint8_t i = 0; i < TRAINER_FX_RINGS; i++)
+        {
+            _fxRingDrawn[i] = -1;
+        }
         _fxCleared = true;
     }
 
-    /* The travelling arc: rub out where it was, draw where it is now. Each piece is one
-     * arc in the ring band, a few thousand pixels, so this costs nothing like a screen. */
-    float nowFromA, nowToA, nowFromB, nowToB;
-    trainer::fxSweepSegments(progress * GAUGE_SWEEP * TRAINER_FX_TURNS, TRAINER_FX_ARC_DEG,
-                            GAUGE_START, GAUGE_START + GAUGE_SWEEP - ANGLE_EPSILON,
-                            nowFromA, nowToA, nowFromB, nowToB);
+    /* The rings, growing out of the middle, drawn the way the rest of this file draws:
+     * only what moved is written, so a frame costs a few thousand pixels and not a screen.
+     * Everything old is rubbed out before anything new is drawn, or two rings that meet
+     * would erase each other. */
+    int16_t radius[TRAINER_FX_RINGS];
+    for (uint8_t i = 0; i < TRAINER_FX_RINGS; i++)
+    {
+        radius[i] = trainer::fxRingStarted(i, progress)
+                        ? trainer::fxRingRadius(i, progress, TRAINER_FX_BURST_RADIUS)
+                        : -1;
+    }
+    for (uint8_t i = 0; i < TRAINER_FX_RINGS; i++)
+    {
+        const int16_t old = _fxRingDrawn[i];
+        if (old >= 2 && old != radius[i])
+        {
+            _gfx->drawCircle(CX, CY, old, COL_BG);
+            _gfx->drawCircle(CX, CY, old - 1, COL_BG);
+        }
+    }
+    for (uint8_t i = 0; i < TRAINER_FX_RINGS; i++)
+    {
+        if (radius[i] >= 2)
+        {
+            const uint16_t color = ((i & 1u) == 0u) ? accent : COL_TRACK;
+            _gfx->drawCircle(CX, CY, radius[i], color);
+            _gfx->drawCircle(CX, CY, radius[i] - 1, color);
+        }
+        _fxRingDrawn[i] = radius[i];
+    }
 
-    if (_fxSweepToA > _fxSweepFromA)
-    {
-        _gfx->fillArc(CX, CY, R_OUT, R_IN, _fxSweepFromA, _fxSweepToA, COL_TRACK);
-    }
-    if (_fxSweepToB > _fxSweepFromB)
-    {
-        _gfx->fillArc(CX, CY, R_OUT, R_IN, _fxSweepFromB, _fxSweepToB, COL_TRACK);
-    }
-    if (nowToA > nowFromA)
-    {
-        _gfx->fillArc(CX, CY, R_OUT, R_IN, nowFromA, nowToA, accent);
-    }
-    if (nowToB > nowFromB)
-    {
-        _gfx->fillArc(CX, CY, R_OUT, R_IN, nowFromB, nowToB, accent);
-    }
-    _fxSweepFromA = nowFromA;
-    _fxSweepToA = nowToA;
-    _fxSweepFromB = nowFromB;
-    _fxSweepToB = nowToB;
-
-    /* The words. At twice the size a long line would run into the ring band, so the size
-     * steps down for anything wide. */
+    /* The words sit on top of the rings. Their box is cleared again on every frame, which
+     * costs nothing to look at: the background is this same black, so the only thing the
+     * clear changes is the ring line that ran through the words. The rings pass behind the
+     * words, which is how the first version looked. */
     char big[24];
     char line[32];
     char tail[32];
@@ -588,31 +611,15 @@ void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, flo
         snprintf(tail, sizeof(tail), "then go again");
     }
 
-    char block[48];
-    snprintf(block, sizeof(block), "%s|%s", big, line);
-
-    const int8_t pulse = (int8_t)(trainer::fxPulseOn(nowMs, 480) ? 1 : 0);
-    if (strcmp(_fxTextDrawn, block) == 0 && _fxPulse == pulse)
-    {
-        return; /* nothing about the words changed: the band was all that moved */
-    }
-
-    const bool newWords = (strcmp(_fxTextDrawn, block) != 0);
-    _fxTextDrawn[0] = '\0';
-    snprintf(_fxTextDrawn, sizeof(_fxTextDrawn), "%s", block);
-    _fxPulse = pulse;
-
-    /* The words live inside the ring band, and clearing their box cannot reach the arc. */
     eraseBox(CX, CY + 5, FX_TEXT_HALF_W, FX_TEXT_HALF_H);
 
+    /* At twice the size a long line would run over the words' box, so the size steps down
+     * for anything wide. */
     const uint8_t scale = (textWidth(&FreeSansBold24pt7b, big, 2) <= TRAINER_FX_TEXT_WIDTH) ? 2 : 1;
     const uint16_t bigColor = trainer::fxPulseOn(nowMs, 480) ? accent : COL_TEXT;
     drawCentered(&FreeSansBold24pt7b, scale, CX, CY - 60, big, bigColor);
-    if (newWords)
-    {
-        drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 30, line, COL_TEXT);
-        drawCentered(&FreeSans9pt7b, 1, CX, CY + 70, tail, COL_DIM);
-    }
+    drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 30, line, COL_TEXT);
+    drawCentered(&FreeSans9pt7b, 1, CX, CY + 70, tail, COL_DIM);
 }
 
 void TrainerDisplay::render(const TrainerScreen &screen)
@@ -660,7 +667,9 @@ void TrainerDisplay::render(const TrainerScreen &screen)
     }
 
     drawGauge(screen.gauge, screen.inZone && screen.sessionActive);
-    drawTicks(trainer::gaugeFraction(screen.goalMm, screen.maxDepthMm), screen.peakGauge);
+    drawTicks(trainer::gaugeFraction(screen.goalMm, screen.maxDepthMm),
+              trainer::gaugeFraction(screen.goalLimitMm, screen.maxDepthMm),
+              screen.peakGauge);
     drawReadout(screen);
     drawUnit(screen);
     drawLevelLine(screen);

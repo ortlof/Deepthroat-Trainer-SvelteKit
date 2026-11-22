@@ -32,9 +32,10 @@ struct TrainerScreen
     float gauge = 0.0f;     /* depth / maxDepth, 0..1 */
     float peakGauge = 0.0f; /* peak / maxDepth, 0..1 */
 
-    int level = 0;      /* level the depth is at now, 0..3 */
+    int level = 0;      /* level the depth is at now, 0..5 */
     int goalLevel = 0;  /* goal the user picked, 0 = free play */
     float goalMm = 0.0f;
+    float goalLimitMm = 0.0f; /* the top of the goal's band: above this it is not the goal */
 
     float holdProgress = 0.0f; /* 0..1 of the hold at the goal */
     float holdSeconds = 0.0f;
@@ -105,7 +106,7 @@ public:
 private:
     void drawStatic();
     void drawGauge(float gauge, bool inZone);
-    void drawTicks(float goalGauge, float peakGauge);
+    void drawTicks(float goalGauge, float limitGauge, float peakGauge);
     void drawReadout(const TrainerScreen &screen);
     void drawUnit(const TrainerScreen &screen);
     void drawLevelLine(const TrainerScreen &screen);
@@ -132,6 +133,7 @@ private:
 
     float _drawnGauge = 0.0f;
     float _drawnGoalGauge = -1.0f;
+    float _drawnLimitGauge = -1.0f;
     float _drawnPeakGauge = -1.0f;
     bool _drawnInZone = false;
     uint32_t _frames = 0;
@@ -159,8 +161,5 @@ private:
      * full clear per frame makes the panel flash, because the framebuffer is scanned out
      * while it is written. */
     bool _fxCleared = false;
-    float _fxSweepFromA = -1.0f, _fxSweepToA = -1.0f; /* where the arc was last drawn */
-    float _fxSweepFromB = -1.0f, _fxSweepToB = -1.0f; /* its wrapped piece, if it had one */
-    char _fxTextDrawn[48] = "";
-    int8_t _fxPulse = -1;
+    int16_t _fxRingDrawn[TRAINER_FX_RINGS] = {-1, -1, -1};
 };

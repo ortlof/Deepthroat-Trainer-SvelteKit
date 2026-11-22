@@ -38,6 +38,7 @@
 		level: number;
 		level_name: string;
 		goal_mm: number;
+		goal_limit_mm: number;
 		in_zone: boolean;
 		hold_complete: boolean;
 		hold_progress: number;
@@ -82,6 +83,13 @@
 		level1_mm: number;
 		level2_mm: number;
 		level3_mm: number;
+		level4_mm: number;
+		level5_mm: number;
+		level1_max_mm: number;
+		level2_max_mm: number;
+		level3_max_mm: number;
+		level4_max_mm: number;
+		level5_max_mm: number;
 		hold_seconds: number;
 		auto_advance: boolean;
 		play_mode: number;
@@ -156,8 +164,15 @@
 		max_depth_mm: 120,
 		calibration_mm: 0,
 		level1_mm: 40,
-		level2_mm: 70,
-		level3_mm: 100,
+		level2_mm: 60,
+		level3_mm: 80,
+		level4_mm: 100,
+		level5_mm: 120,
+		level1_max_mm: 60,
+		level2_max_mm: 80,
+		level3_max_mm: 100,
+		level4_max_mm: 120,
+		level5_max_mm: 140,
 		hold_seconds: 3,
 		auto_advance: false,
 		play_mode: 0,
@@ -186,6 +201,9 @@
 	 * runs clockwise over the top, the same way the panel draws it. */
 	let peakAngle = $derived(135 + 270 * (settings.max_depth_mm > 0 ? state.peak_mm / settings.max_depth_mm : 0));
 	let goalAngle = $derived(135 + 270 * (settings.max_depth_mm > 0 ? state.goal_mm / settings.max_depth_mm : 0));
+	let limitAngle = $derived(
+		135 + 270 * (settings.max_depth_mm > 0 ? state.goal_limit_mm / settings.max_depth_mm : 0)
+	);
 	let displayDepth = $derived(
 		state.units === 1 ? state.depth_mm / 10 : state.units === 2 ? state.depth_mm / 25.4 : state.depth_mm
 	);
@@ -315,6 +333,19 @@
 					transform="rotate({goalAngle} 110 110)"
 				/>
 			{/if}
+			{#if state.goal_limit_mm > 0}
+				<!-- The top of the goal's band: past this the depth is no longer the goal. -->
+				<line
+					x1="110"
+					y1="6"
+					x2="110"
+					y2="20"
+					stroke="currentColor"
+					stroke-opacity="0.6"
+					stroke-width="2"
+					transform="rotate({limitAngle} 110 110)"
+				/>
+			{/if}
 			{#if state.peak_mm > 0}
 				<line
 					x1="110"
@@ -433,15 +464,27 @@
 						onchange={(event) => command({ goal_level: Number(event.currentTarget.value) })}
 					>
 						<option value={0}>Free play</option>
-						<option value={1}>Level 1 ({settings.level1_mm.toFixed(0)} mm)</option>
-						<option value={2}>Level 2 ({settings.level2_mm.toFixed(0)} mm)</option>
-						<option value={3}>Level 3 ({settings.level3_mm.toFixed(0)} mm)</option>
+						<option value={1}>
+							Level 1 ({settings.level1_mm.toFixed(0)}-{settings.level1_max_mm.toFixed(0)} mm)
+						</option>
+						<option value={2}>
+							Level 2 ({settings.level2_mm.toFixed(0)}-{settings.level2_max_mm.toFixed(0)} mm)
+						</option>
+						<option value={3}>
+							Level 3 ({settings.level3_mm.toFixed(0)}-{settings.level3_max_mm.toFixed(0)} mm)
+						</option>
+						<option value={4}>
+							Level 4 ({settings.level4_mm.toFixed(0)}-{settings.level4_max_mm.toFixed(0)} mm)
+						</option>
+						<option value={5}>
+							Level 5 ({settings.level5_mm.toFixed(0)}-{settings.level5_max_mm.toFixed(0)} mm)
+						</option>
 					</select>
 				</div>
 				<div class="grow">
 					<div class="label">
-						Hold {state.hold_seconds_needed.toFixed(1)} s at {state.goal_mm.toFixed(0)} mm:
-						{(state.hold_progress * 100).toFixed(0)} %
+						Hold {state.hold_seconds_needed.toFixed(1)} s between {state.goal_mm.toFixed(0)} and
+						{state.goal_limit_mm.toFixed(0)} mm: {(state.hold_progress * 100).toFixed(0)} %
 					</div>
 					<progress
 						class="progress progress-primary w-full"
@@ -454,7 +497,7 @@
 							: state.in_zone
 								? state.hold_seconds_held.toFixed(1) + ' s in the goal'
 								: state.goal_level > 0
-									? 'Go deeper than the goal to start the hold'
+									? 'Reach the goal, and stay under its upper limit'
 									: 'Pick a level, or leave it on free play'}
 					</div>
 				</div>

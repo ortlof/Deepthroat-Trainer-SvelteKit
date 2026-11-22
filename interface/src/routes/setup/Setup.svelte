@@ -15,6 +15,13 @@
 		level1_mm: number;
 		level2_mm: number;
 		level3_mm: number;
+		level4_mm: number;
+		level5_mm: number;
+		level1_max_mm: number;
+		level2_max_mm: number;
+		level3_max_mm: number;
+		level4_max_mm: number;
+		level5_max_mm: number;
 		hold_seconds: number;
 		auto_advance: boolean;
 		play_mode: number;
@@ -45,8 +52,15 @@
 		max_depth_mm: 145,
 		calibration_mm: 0,
 		level1_mm: 40,
-		level2_mm: 70,
-		level3_mm: 100,
+		level2_mm: 60,
+		level3_mm: 80,
+		level4_mm: 100,
+		level5_mm: 120,
+		level1_max_mm: 60,
+		level2_max_mm: 80,
+		level3_max_mm: 100,
+		level4_max_mm: 120,
+		level5_max_mm: 140,
 		hold_seconds: 3,
 		auto_advance: false,
 		play_mode: 0,
@@ -75,6 +89,18 @@
 	/* The two animations the trainer plays by itself. The names here are the quick
 	 * picks the panel is sized for; anything shorter fits too. */
 	const PRAISE_PICKS = ['GOOD GIRL', 'GOOD BOY', 'GOOD THING'];
+
+	/* A level is a band: it counts from its depth up to its own upper limit. */
+	const LEVELS = [1, 2, 3, 4, 5];
+
+	function levelValue(level: number, which: 'mm' | 'max_mm'): number {
+		const key = `level${level}_${which}` as keyof TrainerSettings;
+		return settings[key] as number;
+	}
+
+	function saveLevel(level: number, low: number, high: number) {
+		saveSettings({ [`level${level}_mm`]: low, [`level${level}_max_mm`]: high } as Partial<TrainerSettings>);
+	}
 
 	function authHeader() {
 		return {
@@ -289,47 +315,41 @@
 	{/snippet}
 
 	<div class="grid grid-cols-1 gap-x-8 gap-y-2 md:grid-cols-2">
-		<div class="fieldset">
-			<label class="label" for="level1">Level 1 ({settings.level1_mm.toFixed(0)} mm)</label>
-			<input
-				id="level1"
-				type="range"
-				class="range range-primary"
-				min="5"
-				max="240"
-				step="5"
-				bind:value={settings.level1_mm}
-				onchange={() => saveSettings({ level1_mm: settings.level1_mm })}
-			/>
-		</div>
-
-		<div class="fieldset">
-			<label class="label" for="level2">Level 2 ({settings.level2_mm.toFixed(0)} mm)</label>
-			<input
-				id="level2"
-				type="range"
-				class="range range-primary"
-				min="5"
-				max="240"
-				step="5"
-				bind:value={settings.level2_mm}
-				onchange={() => saveSettings({ level2_mm: settings.level2_mm })}
-			/>
-		</div>
-
-		<div class="fieldset">
-			<label class="label" for="level3">Level 3 ({settings.level3_mm.toFixed(0)} mm)</label>
-			<input
-				id="level3"
-				type="range"
-				class="range range-primary"
-				min="5"
-				max="240"
-				step="5"
-				bind:value={settings.level3_mm}
-				onchange={() => saveSettings({ level3_mm: settings.level3_mm })}
-			/>
-		</div>
+		{#each LEVELS as level (level)}
+			<div class="fieldset">
+				<label class="label" for="level{level}">
+					Level {level} from ({levelValue(level, 'mm').toFixed(0)} mm)
+				</label>
+				<input
+					id="level{level}"
+					type="range"
+					class="range range-primary"
+					min="5"
+					max="240"
+					step="5"
+					value={levelValue(level, 'mm')}
+					onchange={(event) => saveLevel(level, Number(event.currentTarget.value), levelValue(level, 'max_mm'))}
+				/>
+				<label class="label" for="level{level}max">
+					Level {level} counts up to ({levelValue(level, 'max_mm').toFixed(0)} mm)
+				</label>
+				<input
+					id="level{level}max"
+					type="range"
+					class="range range-secondary"
+					min="5"
+					max="240"
+					step="5"
+					value={levelValue(level, 'max_mm')}
+					onchange={(event) => saveLevel(level, levelValue(level, 'mm'), Number(event.currentTarget.value))}
+				/>
+				<div class="label">
+					A goal only counts between these two depths. Past the upper limit it is not the goal, which
+					stops {"\u2018"}deeper is better{"\u2019"} from completing a level. The upper limit is never allowed
+					below the level itself.
+				</div>
+			</div>
+		{/each}
 
 		<div class="fieldset">
 			<label class="label" for="hold">Hold time ({settings.hold_seconds.toFixed(1)} s)</label>

@@ -22,8 +22,15 @@
 #include <HttpEndpoint.h>
 #include <StatefulService.h>
 
+#include "trainer_math.h"
+
 #define TRAINER_SETTINGS_ENDPOINT_PATH "/rest/trainerSettings"
 #define TRAINER_SETTINGS_FILE_PATH "/config/trainerSettings.json"
+
+/* A band narrower than this is not a target anyone can hit: a level and its upper limit are
+ * pushed apart to at least this much. It also makes an old configuration safe: a level that
+ * predates the upper limits arrives with its limit equal to its depth. */
+#define TRAINER_MIN_BAND_MM 10.0f
 
 /* Widest calibration the applier accepts, in millimetres. A mounting error is
  * centimetres, not metres; a bigger value hides a wrong reference distance. */
@@ -39,10 +46,20 @@ public:
                                     * which is as close as the sensor measures well */
     float calibration_mm = 0.0f;   /* added to every range sample */
 
-    /* --- goals --- */
+    /* --- goals ---
+     * Every level is a band: it counts from its depth up to its own upper limit. Going past
+     * the top of a level does not count as that level, so the upper limit is what makes the
+     * goal a target rather than "deeper is better". */
     float level1_mm = 40.0f;
-    float level2_mm = 70.0f;
-    float level3_mm = 100.0f;
+    float level2_mm = 60.0f;
+    float level3_mm = 80.0f;
+    float level4_mm = 100.0f;
+    float level5_mm = 120.0f;
+    float level1_max_mm = 60.0f;
+    float level2_max_mm = 80.0f;
+    float level3_max_mm = 100.0f;
+    float level4_max_mm = 120.0f;
+    float level5_max_mm = 140.0f;
     float hold_seconds = 3.0f;     /* how long a goal must be held */
     bool auto_advance = false;     /* move to the next level after each hold */
 
@@ -68,6 +85,39 @@ public:
     int16_t panel_centre_x = 225;
     int16_t panel_centre_y = 231;
 
+    /* The goals as the pure maths wants them: five depths and five upper limits. */
+    void levelLows(float out[trainer::kLevelCount]) const
+    {
+        out[0] = level1_mm;
+        out[1] = level2_mm;
+        out[2] = level3_mm;
+        out[3] = level4_mm;
+        out[4] = level5_mm;
+    }
+
+    void levelHighs(float out[trainer::kLevelCount]) const
+    {
+        out[0] = level1_max_mm;
+        out[1] = level2_max_mm;
+        out[2] = level3_max_mm;
+        out[3] = level4_max_mm;
+        out[4] = level5_max_mm;
+    }
+
+    void setLevels(const float lows[trainer::kLevelCount], const float highs[trainer::kLevelCount])
+    {
+        level1_mm = lows[0];
+        level2_mm = lows[1];
+        level3_mm = lows[2];
+        level4_mm = lows[3];
+        level5_mm = lows[4];
+        level1_max_mm = highs[0];
+        level2_max_mm = highs[1];
+        level3_max_mm = highs[2];
+        level4_max_mm = highs[3];
+        level5_max_mm = highs[4];
+    }
+
     static void read(TrainerSettings &settings, JsonObject &root)
     {
         root["reference_mm"] = settings.reference_mm;
@@ -76,6 +126,13 @@ public:
         root["level1_mm"] = settings.level1_mm;
         root["level2_mm"] = settings.level2_mm;
         root["level3_mm"] = settings.level3_mm;
+        root["level4_mm"] = settings.level4_mm;
+        root["level5_mm"] = settings.level5_mm;
+        root["level1_max_mm"] = settings.level1_max_mm;
+        root["level2_max_mm"] = settings.level2_max_mm;
+        root["level3_max_mm"] = settings.level3_max_mm;
+        root["level4_max_mm"] = settings.level4_max_mm;
+        root["level5_max_mm"] = settings.level5_max_mm;
         root["hold_seconds"] = settings.hold_seconds;
         root["auto_advance"] = settings.auto_advance;
         root["play_mode"] = settings.play_mode;
@@ -104,16 +161,39 @@ public:
         float calibration = root["calibration_mm"] | settings.calibration_mm;
         calibration = constrain(calibration, -TRAINER_CALIBRATION_LIMIT_MM, TRAINER_CALIBRATION_LIMIT_MM);
 
-        /* The goals must stay ordered, or "level 2" could be shallower than
-         * "level 1" and the level display would jump backwards. Level 3 is
-         * bounded by the gauge, not by the clamp: a goal beyond full scale is
-         * still reachable, just not visible on the ring. */
-        float level1 = root["level1_mm"] | settings.level1_mm;
-        level1 = constrain(level1, 5.0f, 240.0f);
-        float level2 = root["level2_mm"] | settings.level2_mm;
-        level2 = constrain(level2, level1, 240.0f);
-        float level3 = root["level3_mm"] | settings.level3_mm;
-        level3 = constrain(level3, level2, 240.0f);
+        /* Five goals, each with its own upper limit. The levels must stay ordered, or
+         * "level 2" could be shallower than "level 1" and the level display would jump
+         * backwards. An upper limit is never below its own level, so a band can never be
+         * inside out: the limit below the level would otherwise make the goal impossible. */
+        float currentLows[trainer::kLevelCount];
+        float currentHighs[trainer::kLevelCount];
+        settings.levelLows(currentLows);
+        settings.levelHighs(currentHighs);
+
+        float lows[trainer::kLevelCount];
+        float highs[trainer::kLevelCount];
+        for (int i = 0; i < trainer::kLevelCount; i++)
+        {
+            char key[24];
+            snprintf(key, sizeof(key), "level%d_mm", i + 1);
+            /* The top level is 200 mm: deeper than that is past the full scale of the ring
+             * on any sane mounting, and it leaves room for the band above it. */
+            const float floor = (i == 0) ? 5.0f : lows[i - 1];
+            lows[i] = constrain((float)(root[key] | currentLows[i]), floor, 200.0f);
+
+            snprintf(key, sizeof(key), "level%d_max_mm", i + 1);
+            highs[i] = constrain((float)(root[key] | currentHighs[i]),
+                                 lows[i] + TRAINER_MIN_BAND_MM, 240.0f);
+        }
+
+        bool goalsSame = true;
+        for (int i = 0; i < trainer::kLevelCount; i++)
+        {
+            if (lows[i] != currentLows[i] || highs[i] != currentHighs[i])
+            {
+                goalsSame = false;
+            }
+        }
 
         float hold = root["hold_seconds"] | settings.hold_seconds;
         hold = constrain(hold, 0.5f, 60.0f);
@@ -164,8 +244,7 @@ public:
         centreY = constrain(centreY, 200, 280);
 
         if (reference == settings.reference_mm && maxDepth == settings.max_depth_mm &&
-            calibration == settings.calibration_mm && level1 == settings.level1_mm &&
-            level2 == settings.level2_mm && level3 == settings.level3_mm &&
+            calibration == settings.calibration_mm && goalsSame &&
             hold == settings.hold_seconds && autoAdvance == settings.auto_advance &&
             playMode == (int)settings.play_mode && repsTarget == (int)settings.reps_target &&
             tau == settings.filter_tau_s && stop == settings.session_stop_s &&
@@ -180,9 +259,7 @@ public:
         settings.reference_mm = reference;
         settings.max_depth_mm = maxDepth;
         settings.calibration_mm = calibration;
-        settings.level1_mm = level1;
-        settings.level2_mm = level2;
-        settings.level3_mm = level3;
+        settings.setLevels(lows, highs);
         settings.hold_seconds = hold;
         settings.auto_advance = autoAdvance;
         settings.play_mode = (uint8_t)playMode;

@@ -184,6 +184,6 @@
  * visible as the whole panel flashing. */
 #define TRAINER_REP_FX_MS 2600     /* a rep counted: the count, and the way back out */
 #define TRAINER_PRAISE_FX_MS 8000  /* the set is finished: the praise animation */
-#define TRAINER_FX_ARC_DEG 74.0f   /* how long the travelling arc is */
-#define TRAINER_FX_TURNS 1.5f      /* how often it runs round during one animation */
+#define TRAINER_FX_RINGS 3         /* rings in the burst, each a little later than the last */
+#define TRAINER_FX_BURST_RADIUS 205
 #define TRAINER_FX_TEXT_WIDTH 300  /* the widest the words may be at the larger size */

@@ -106,22 +106,72 @@ inline float gaugeFraction(float depthMm, float maxDepthMm)
 
 /* ---------------------------------------------------------------- level ---- */
 
-/* 0 = below the first goal, 1..3 = that goal or deeper */
-inline int levelForDepth(float depthMm, float level1Mm, float level2Mm, float level3Mm)
+/* Five goals. Level 0 is "no goal, free play"; 1..5 are the levels the user picks. */
+constexpr int kLevelCount = 5;
+
+/* A level is a *band*, not a floor: it only counts while the depth is between the level's
+ * depth and its upper limit. Going past the top of a level is then not a way to complete it,
+ * which is the point of the upper limit (level 1 counts between 40 mm and 60 mm, not from
+ * 40 mm on for ever). */
+struct LevelBand
 {
-    if (depthMm >= level3Mm && level3Mm > 0.0f)
+    float low = 0.0f;
+    float high = 0.0f;
+};
+
+inline LevelBand bandForLevel(int level, const float lows[kLevelCount], const float highs[kLevelCount],
+                              float minWidthMm = 0.0f)
+{
+    LevelBand band;
+    if (level < 1 || level > kLevelCount)
     {
-        return 3;
+        return band;
     }
-    if (depthMm >= level2Mm && level2Mm > 0.0f)
+    band.low = lows[level - 1];
+    band.high = (highs[level - 1] < band.low) ? band.low : highs[level - 1];
+    /* A band narrower than minWidth is not a target anyone can hit. A level saved before the
+     * upper limits existed arrives with its limit equal to its depth, which would make it
+     * impossible, so the width is enforced here as well as when the settings are written. */
+    if (band.high < band.low + minWidthMm)
     {
-        return 2;
+        band.high = band.low + minWidthMm;
     }
-    if (depthMm >= level1Mm && level1Mm > 0.0f)
+    return band;
+}
+
+/* Which level the depth is at now: the deepest level it has reached. 0 means shallower than
+ * every level. The upper limits do not enter into it - the level is where the depth is, and
+ * the band decides whether a hold counts. */
+inline int levelForDepth(float depthMm, const float lows[kLevelCount])
+{
+    int level = 0;
+    for (int i = 0; i < kLevelCount; i++)
     {
-        return 1;
+        if (lows[i] > 0.0f && depthMm >= lows[i])
+        {
+            level = i + 1;
+        }
     }
-    return 0;
+    return level;
+}
+
+/* Does the depth count for this level, right now? Both ends are inclusive, so the value in
+ * the setting is reachable. */
+inline bool inBand(float depthMm, const LevelBand &band)
+{
+    return band.low > 0.0f && depthMm >= band.low && depthMm <= band.high;
+}
+
+/* How far the depth has got across the band, 0..1. Used for the hold bar and for the web
+ * interface, not for the decision itself. */
+inline float bandProgress(float depthMm, const LevelBand &band)
+{
+    const float span = band.high - band.low;
+    if (span <= 0.0f)
+    {
+        return inBand(depthMm, band) ? 1.0f : 0.0f;
+    }
+    return clampf((depthMm - band.low) / span, 0.0f, 1.0f);
 }
 
 inline const char *levelName(int level)
@@ -134,25 +184,23 @@ inline const char *levelName(int level)
         return "Level 2";
     case 3:
         return "Level 3";
+    case 4:
+        return "Level 4";
+    case 5:
+        return "Level 5";
     default:
         return "Warm up";
     }
 }
 
 /* The user picks the goal as a level number; 0 means "no goal, free play". */
-inline float goalForLevel(int level, float level1Mm, float level2Mm, float level3Mm)
+inline float goalForLevel(int level, const float lows[kLevelCount])
 {
-    switch (level)
+    if (level < 1 || level > kLevelCount)
     {
-    case 1:
-        return level1Mm;
-    case 2:
-        return level2Mm;
-    case 3:
-        return level3Mm;
-    default:
         return 0.0f;
     }
+    return lows[level - 1];
 }
 
 /* --------------------------------------------------------------- filter ---- */
@@ -371,27 +419,29 @@ inline float fxProgress(uint32_t nowMs, uint32_t startMs, uint32_t durationMs)
     return (float)elapsed / (float)durationMs;
 }
 
-/* The celebration arc. It travels round the ring band and must never leave it, so when it
- * passes the end of the ring the remainder wraps to the start: this returns the two pieces
- * to draw, and the second one is empty when the arc does not wrap. Getting the wrap wrong
- * is what leaves a stray arc segment on the panel, so it is done here, under test. */
-inline void fxSweepSegments(float offset, float arcDegrees, float ringStart, float ringEnd,
-                            float &fromA, float &toA, float &fromB, float &toB)
+/* One ring of the burst: it leaves the middle at its own moment and reaches the rim at the
+ * end of its own span, then stays there. The stagger is what makes the burst read as
+ * movement rather than as one growing circle. */
+inline float fxRingGauge(uint8_t index, float progress)
 {
-    const float span = ringEnd - ringStart;
-    float travel = (span > 0.0f) ? fmodf(offset, span) : 0.0f;
-    if (travel < 0.0f)
-    {
-        travel += span;
-    }
+    /* Three rings, each a little later than the one before, and the last one still reaches
+     * the rim inside the animation: 0.15 + 3 * 0.15 + 0.55 = 1.00. */
+    const float ringOffset = 0.15f;
+    const float ringSpan = 0.55f;
+    float t = (progress - ringOffset * (float)index) / ringSpan;
+    return (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+}
 
-    const float start = ringStart + travel;
-    const float end = start + arcDegrees;
+inline int16_t fxRingRadius(uint8_t index, float progress, int16_t outRadius)
+{
+    return (int16_t)lroundf(fxRingGauge(index, progress) * (float)outRadius);
+}
 
-    fromA = start;
-    toA = (end < ringEnd) ? end : ringEnd;
-    fromB = ringStart;
-    toB = (end < ringEnd) ? ringStart : (ringStart + (end - ringEnd));
+/* A ring is only drawn once it has started growing: before that it would sit on the ring in
+ * front of it and the burst would look like one thick line. */
+inline bool fxRingStarted(uint8_t index, float progress)
+{
+    return fxRingGauge(index, progress) > 0.0f;
 }
 
 /* A pulse, so an animation that has settled still looks alive. */

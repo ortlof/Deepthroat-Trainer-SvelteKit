@@ -157,9 +157,32 @@ void displayTask(void *pvParameters);
 
 /* -------------------------------------------------------------- helpers ---- */
 
+/* The goals as the pure maths wants them: the settings keep them as named fields and the
+ * trainer needs arrays of five. */
+static void levelBands(float lows[trainer::kLevelCount], float highs[trainer::kLevelCount])
+{
+    cfg().levelLows(lows);
+    cfg().levelHighs(highs);
+}
+
+/* The band of the level the user picked. Level 0 (free play) gives an empty band, which is
+ * never in range, so free play counts nothing. */
+static trainer::LevelBand currentBand()
+{
+    float lows[trainer::kLevelCount];
+    float highs[trainer::kLevelCount];
+    levelBands(lows, highs);
+    return trainer::bandForLevel(lastGoalLevel, lows, highs, TRAINER_MIN_BAND_MM);
+}
+
 static float currentGoalMm()
 {
-    return trainer::goalForLevel(lastGoalLevel, cfg().level1_mm, cfg().level2_mm, cfg().level3_mm);
+    return currentBand().low;
+}
+
+static float currentGoalLimitMm()
+{
+    return currentBand().high;
 }
 
 static void setNotice(const char *text)
@@ -705,7 +728,8 @@ static void applyTrainerStateToSession(const String &originId)
         char buffer[48];
         if (lastGoalLevel > 0)
         {
-            snprintf(buffer, sizeof(buffer), "goal %s at %d mm", trainer::levelName(lastGoalLevel), (int)lroundf(currentGoalMm()));
+            snprintf(buffer, sizeof(buffer), "goal %s: %d-%d mm", trainer::levelName(lastGoalLevel),
+                     (int)lroundf(currentGoalMm()), (int)lroundf(currentGoalLimitMm()));
         }
         else
         {
@@ -745,9 +769,13 @@ static void buildSnapshot()
     screen.maxDepthMm = cfg().max_depth_mm;
     screen.gauge = trainer::gaugeFraction(depthMm, cfg().max_depth_mm);
     screen.peakGauge = trainer::gaugeFraction(peakMm, cfg().max_depth_mm);
-    screen.level = trainer::levelForDepth(depthMm, cfg().level1_mm, cfg().level2_mm, cfg().level3_mm);
+    float lows[trainer::kLevelCount];
+    float highs[trainer::kLevelCount];
+    levelBands(lows, highs);
+    screen.level = trainer::levelForDepth(depthMm, lows);
     screen.goalLevel = lastGoalLevel;
     screen.goalMm = currentGoalMm();
+    screen.goalLimitMm = currentGoalLimitMm();
     screen.holdProgress = holdTracker.progress();
     screen.holdSeconds = holdTracker.heldSeconds();
     screen.holdNeeded = holdTracker.neededSeconds();
@@ -807,6 +835,7 @@ static void buildSnapshot()
 static void publishState()
 {
     const float goal = currentGoalMm();
+    const float goalLimit = currentGoalLimitMm();
     const bool inZone = holdTracker.inZone();
     const bool holdComplete = holdTracker.complete();
     const float progress = holdTracker.progress();
@@ -847,12 +876,16 @@ static void publishState()
         if (fabsf(state.peakMm - peakMm) >= 0.5f) { state.peakMm = peakMm; changed = true; }
         const float gauge = trainer::gaugeFraction(depthMm, cfg().max_depth_mm);
         if (fabsf(state.gauge - gauge) >= 0.005f) { state.gauge = gauge; changed = true; }
-        const int level = trainer::levelForDepth(depthMm, cfg().level1_mm, cfg().level2_mm, cfg().level3_mm);
+        float goalLows[trainer::kLevelCount];
+        float goalHighs[trainer::kLevelCount];
+        levelBands(goalLows, goalHighs);
+        const int level = trainer::levelForDepth(depthMm, goalLows);
         if (state.level != level) { state.level = level; changed = true; }
         const char *levelName = trainer::levelName(level);
         if (strcmp(state.levelName, levelName) != 0) { snprintf(state.levelName, sizeof(state.levelName), "%s", levelName); changed = true; }
         if (state.goalLevel != lastGoalLevel) { state.goalLevel = lastGoalLevel; changed = true; }
         if (fabsf(state.goalMm - goal) >= 0.5f) { state.goalMm = goal; changed = true; }
+        if (fabsf(state.goalLimitMm - goalLimit) >= 0.5f) { state.goalLimitMm = goalLimit; changed = true; }
         if (state.inZone != inZone) { state.inZone = inZone; changed = true; }
         if (state.holdComplete != holdComplete) { state.holdComplete = holdComplete; changed = true; }
         if (fabsf(state.holdProgress - progress) >= 0.01f) { state.holdProgress = progress; changed = true; }
@@ -1043,11 +1076,11 @@ void trainerTask(void *pvParameters)
                     lastActivityMs = millis();
                 }
 
-                /* A goal is held when the depth stays at or above it. The
-                 * tracker owns the timing, so a pause in the sample stream
-                 * cannot complete a hold on its own. */
-                const float goal = currentGoalMm();
-                const bool atGoal = session.active() && lastGoalLevel > 0 && goal > 0.0f && depthMm >= goal;
+                /* A goal counts while the depth is inside its band: at or past the level,
+                 * and not past the level's upper limit. The tracker owns the timing, so a
+                 * pause in the sample stream cannot complete a hold on its own. */
+                const trainer::LevelBand band = currentBand();
+                const bool atGoal = session.active() && trainer::inBand(depthMm, band);
                 holdTracker.update(atGoal, dt);
 
                 if (holdTracker.complete() && !holdCounted)
@@ -1103,7 +1136,7 @@ void trainerTask(void *pvParameters)
                         setNotice(buffer);
                         esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
 
-                        if (cfg().auto_advance && lastGoalLevel < 3)
+                        if (cfg().auto_advance && lastGoalLevel < trainer::kLevelCount)
                         {
                             lastGoalLevel++;
                             holdTracker.reset(cfg().hold_seconds);

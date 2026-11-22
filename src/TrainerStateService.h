@@ -66,6 +66,9 @@ public:
     int level = 0;
     char levelName[24] = "Warm up";
     float goalMm = 0.0f;
+    /* The top of the goal's band. A depth above this does not count for the goal, so the
+     * goal is a target and not "as deep as you like". */
+    float goalLimitMm = 0.0f;
     bool inZone = false;
     bool holdComplete = false;
     float holdProgress = 0.0f;
@@ -160,6 +163,7 @@ public:
         root["level"] = state.level;
         root["level_name"] = state.levelName;
         root["goal_mm"] = state.goalMm;
+        root["goal_limit_mm"] = state.goalLimitMm;
         root["in_zone"] = state.inZone;
         root["hold_complete"] = state.holdComplete;
         root["hold_progress"] = state.holdProgress;
@@ -218,7 +222,7 @@ public:
         const bool zero = root["zero"] | state.zero;
         const bool resetPeak = root["reset_peak"] | state.resetPeak;
         int goalLevel = root["goal_level"] | state.goalLevel;
-        goalLevel = constrain(goalLevel, 0, 3);
+        goalLevel = constrain(goalLevel, 0, 5);
         const bool displayOn = root["display_on"] | state.displayOn;
 
         /* A panel effect is always taken as a change, so the same animation can be
