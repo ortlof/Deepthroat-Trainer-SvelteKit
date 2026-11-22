@@ -97,6 +97,12 @@ public:
      * the panel did not answer; the firmware then runs headless. */
     bool begin();
 
+    /* Read-only access to the panel's own framebuffer, for the /rest/frame crop dump. It exists
+     * because a seam in the ring's drawing cannot be settled by reading the library's scanline
+     * fill - it has to be looked at. Nothing may write through this pointer: the panel scans it
+     * out continuously. */
+    uint16_t *frameBuffer();
+
     bool present() const { return _present; }
 
     void setBrightness(uint8_t percent);

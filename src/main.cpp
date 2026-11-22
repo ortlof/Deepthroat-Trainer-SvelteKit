@@ -145,6 +145,36 @@ static void buildSnapshot();
 static void publishState();
 static float readBatteryVolts();
 static void handleTouch();
+/* Reads an integer out of the request's query string. The query arrives without its "?" - "x=12
+ * and y=34" - so a key is a match at the start or right after an ampersand. A plain indexOf would
+ * find the "x=" inside "max=". A missing or malformed key gives the fallback. */
+static int queryInt(const String &query, const char *key, int fallback)
+{
+    const String head = String(key) + "=";
+    int from = -1;
+    if (query.startsWith(head))
+    {
+        from = head.length();
+    }
+    else
+    {
+        const String needle = String("&") + head;
+        const int at = query.indexOf(needle);
+        if (at < 0)
+        {
+            return fallback;
+        }
+        from = at + needle.length();
+    }
+    const int to = query.indexOf('&', from);
+    const String value = (to < 0) ? query.substring(from) : query.substring(from, to);
+    if (value.length() == 0)
+    {
+        return fallback;
+    }
+    return value.toInt();
+}
+
 static void openMenu();
 static void closeMenu();
 static void pressMenuChip();
@@ -1777,6 +1807,66 @@ void setup()
 
     trainerSettingsService.begin();
     trainerStateService.begin();
+
+    /* ------------------------------------------------------------------ /rest/frame -------
+     * A crop of the panel's own pixels as raw RGB565, row major, little endian, with the geometry
+     * in headers. It exists so that drawing questions can be settled by looking at the panel
+     * instead of by reasoning about a scanline fill: a one pixel seam in an arc is invisible in
+     * the source and obvious in a crop.
+     *
+     * The coordinates come out of the query string by hand, because the handler must not depend on
+     * a parameter API that may differ between framework versions. The buffer is copied, not
+     * borrowed: the panel is scanning it out while this runs. */
+    esp32sveltekit.getServer()->on("/rest/frame", HTTP_GET, [](PsychicRequest *request)
+                                   {
+        uint16_t *frame = display.frameBuffer();
+        if (frame == nullptr)
+        {
+            return request->reply(503, "text/plain", "no panel");
+        }
+
+        const String url = request->query();
+        int x = queryInt(url, "x", 0);
+        int y = queryInt(url, "y", 0);
+        int w = queryInt(url, "w", 64);
+        int h = queryInt(url, "h", 64);
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (w < 1) w = 1;
+        if (h < 1) h = 1;
+        if (w > 240) w = 240;   /* keep one dump inside a few tens of kB */
+        if (h > 240) h = 240;
+        if (x + w > TRAINER_TFT_WIDTH) w = TRAINER_TFT_WIDTH - x;
+        if (y + h > TRAINER_TFT_HEIGHT) h = TRAINER_TFT_HEIGHT - y;
+        if (w < 1 || h < 1)
+        {
+            return request->reply(400, "text/plain", "crop outside the panel");
+        }
+
+        const size_t bytes = (size_t)w * (size_t)h * 2u;
+        uint8_t *copy = (uint8_t *)malloc(bytes);
+        if (copy == nullptr)
+        {
+            return request->reply(503, "text/plain", "no room for the crop");
+        }
+        for (int row = 0; row < h; ++row)
+        {
+            memcpy(copy + (size_t)row * (size_t)w * 2u,
+                   frame + (size_t)(y + row) * (size_t)TRAINER_TFT_WIDTH + (size_t)x,
+                   (size_t)w * 2u);
+        }
+
+        PsychicResponse response(request);
+        response.setCode(200);
+        response.setContentType("application/octet-stream");
+        response.addHeader("X-Frame-W", String(w).c_str());
+        response.addHeader("X-Frame-H", String(h).c_str());
+        response.addHeader("X-Frame-X", String(x).c_str());
+        response.addHeader("X-Frame-Y", String(y).c_str());
+        response.setContent(copy, bytes);
+        const esp_err_t sent = response.send();
+        free(copy);
+        return sent; });
 
     /* The cached copy must exist before the tasks start. */
     refreshSettings(true);

@@ -116,6 +116,18 @@ static Arduino_RGB_Display *makeDisplay(Arduino_ESP32RGBPanel *panel, Arduino_XL
 #endif
 }
 
+/* The panel's own scanout buffer, as the display object already holds it. Asking the panel for it
+ * again would build a second panel configuration and a second framebuffer, which is why this goes
+ * through the accessor the display class already exposes. */
+uint16_t *TrainerDisplay::frameBuffer()
+{
+    if (_gfx == nullptr)
+    {
+        return nullptr;
+    }
+    return static_cast<Arduino_RGB_Display *>(_gfx)->getFramebuffer();
+}
+
 bool TrainerDisplay::begin()
 {
     /* The XL9535 data bus talks over I2C, and it does not start Wire itself:
