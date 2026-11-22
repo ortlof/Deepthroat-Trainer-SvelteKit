@@ -104,6 +104,8 @@ public:
     /* Rep mode */
     uint8_t playMode = 0;   /* 0 = hold the goal, 1 = count reps */
     uint16_t repCount = 0;  /* reps completed in this session */
+    /* Seconds of the current rest between reps; 0 when no rest is running. */
+    uint16_t repBreakS = 0;
 
     /* A panel effect: 0 none, 1 a rep counted, 2 the set is finished. The trainer task
      * starts them; a client may start one too, which is how the animation is tested
@@ -208,6 +210,7 @@ public:
         root["session_holds"] = state.sessionHolds;
         root["play_mode"] = state.playMode;
         root["rep_count"] = state.repCount;
+        root["rep_break_s"] = state.repBreakS;
         root["rep_target"] = state.repTarget;
         root["rep_armed"] = state.repArmed;
         root["reps_left"] = (state.repTarget > state.repCount) ? (state.repTarget - state.repCount) : 0;

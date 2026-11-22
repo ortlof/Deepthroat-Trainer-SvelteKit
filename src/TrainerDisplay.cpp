@@ -416,14 +416,30 @@ void TrainerDisplay::drawReadout(const TrainerScreen &screen)
 
 void TrainerDisplay::drawUnit(const TrainerScreen &screen)
 {
-    const char *unit = (screen.unit == 1) ? "cm" : ((screen.unit == 2) ? "in" : "mm");
-    if (_lastUnit != unit)
+    /* During a rest the unit is the least useful thing that line could carry, so the break
+     * counter takes it: it counts the pause between reps, which is the number the operator is
+     * actually watching. */
+    char breakText[16];
+    const char *text;
+    uint16_t ink = COL_DIM;
+    if (screen.repBreakS > 0)
+    {
+        snprintf(breakText, sizeof(breakText), "BREAK %u", (unsigned)screen.repBreakS);
+        text = breakText;
+        ink = COL_TEXT;
+    }
+    else
+    {
+        text = (screen.unit == 1) ? "cm" : ((screen.unit == 2) ? "in" : "mm");
+    }
+
+    if (_lastUnit != text)
     {
         const int16_t halfHeight = (int16_t)pgm_read_byte(&FreeSansBold12pt7b.yAdvance) / 2 + 3;
         eraseBox(CX, UNIT_CY, _lastUnitWidth / 2 + 6, halfHeight);
-        _lastUnit = unit;
-        _lastUnitWidth = textWidth(&FreeSansBold12pt7b, unit, 1);
-        drawCentered(&FreeSansBold12pt7b, 1, CX, UNIT_CY, unit, COL_DIM);
+        _lastUnit = text;
+        _lastUnitWidth = textWidth(&FreeSansBold12pt7b, text, 1);
+        drawCentered(&FreeSansBold12pt7b, 1, CX, UNIT_CY, text, ink);
     }
 }
 

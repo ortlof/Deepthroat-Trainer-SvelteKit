@@ -87,6 +87,9 @@ struct TrainerScreen
      * this struct is copied between the trainer task and the display task and
      * must stay a POD (see the snapshot lock in main.cpp). */
     char footer[40] = "booting";
+    /* Seconds of the rest between reps, 0 when there is none. Shown on the unit line, which is
+     * the one piece of the panel a break has room for. */
+    uint16_t repBreakS = 0;
     uint8_t unit = 0; /* 0 mm, 1 cm, 2 in */
 };
 

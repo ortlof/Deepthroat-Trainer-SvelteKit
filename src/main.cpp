@@ -97,6 +97,8 @@ static inline const TrainerSettings &cfg()
  * trainer_math.h, so the host tests cover it. This sits after cfg() because the mode
  * lives in the settings. */
 static trainer::RepCount repCounter;
+/* The rest between reps, timed from the moment the depth is back out and the next rep is armed. */
+static trainer::RepBreak repBreak;
 
 static bool playModeReps()
 {
@@ -950,6 +952,7 @@ static void buildSnapshot()
     /* Rep mode: the count replaces the level name on the panel. */
     screen.repMode = playModeReps();
     screen.repCount = repCounter.count;
+    screen.repBreakS = repBreak.seconds(millis());
     screen.repTarget = cfg().reps_target;
 
     /* The panel menu. Its own flag and notice come from this task; the mode and the level
@@ -1082,6 +1085,8 @@ static void publishState()
         if (state.repTarget != cfg().reps_target) { state.repTarget = cfg().reps_target; changed = true; }
         if (state.repCount != repCounter.count) { state.repCount = repCounter.count; changed = true; }
         if (state.repArmed != repCounter.armed) { state.repArmed = repCounter.armed; changed = true; }
+        const uint16_t restSeconds = repBreak.seconds(millis());
+        if (state.repBreakS != restSeconds) { state.repBreakS = restSeconds; changed = true; }
         if (fabsf(state.lastSessionPeakMm - lastSession.peakMm) >= 0.5f) { state.lastSessionPeakMm = lastSession.peakMm; changed = true; }
         if (fabsf(state.lastSessionAvgMm - lastSession.averageMm()) >= 0.5f) { state.lastSessionAvgMm = lastSession.averageMm(); changed = true; }
         if (fabsf(state.lastSessionSeconds - lastSession.elapsedSeconds) >= 0.2f) { state.lastSessionSeconds = lastSession.elapsedSeconds; changed = true; }
@@ -1682,6 +1687,10 @@ void trainerTask(void *pvParameters)
                 {
                     repCounter.release(depthMm, TRAINER_REP_RELEASE_MM);
                 }
+                /* The rest between reps: it runs while the next rep is armed and at least one rep
+                 * is done, which is exactly the pause the operator is taking. */
+                repBreak.update(playModeReps() && repCounter.armed, session.active(), repCounter.count,
+                                millis());
             }
             else
             {

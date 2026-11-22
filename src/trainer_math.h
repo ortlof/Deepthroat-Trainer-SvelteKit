@@ -80,6 +80,55 @@ struct RepCount
     }
 };
 
+/* ------------------------------------------------------------- rep break ---- */
+
+/* The rest between reps. It starts the moment the depth is fully out and the next rep is armed,
+ * and ends the moment that rep counts - so it measures exactly the pause the operator took, which
+ * is what makes it useful: a rest held for a known number of seconds instead of guessed at. Basti
+ * asked for it in as many words: "we need a break time counter when fully out". */
+struct RepBreak
+{
+    bool running = false;
+    uint32_t startedMs = 0;
+
+    /* Called on every pass with whether the next rep is armed and how many reps are done. A break
+     * only exists between reps, so the count of zero - standing at the start of a set - is not one.
+     * Returns true on the pass where a break begins. */
+    bool update(bool armed, bool sessionActive, uint16_t repsDone, uint32_t nowMs)
+    {
+        const bool shouldRun = armed && sessionActive && repsDone > 0;
+        if (shouldRun && !running)
+        {
+            running = true;
+            startedMs = nowMs;
+            return true;
+        }
+        if (!shouldRun)
+        {
+            running = false;
+        }
+        return false;
+    }
+
+    void reset()
+    {
+        running = false;
+        startedMs = 0;
+    }
+
+    uint16_t seconds(uint32_t nowMs) const
+    {
+        if (!running || nowMs < startedMs)
+        {
+            return 0;
+        }
+        const uint32_t elapsed = nowMs - startedMs;
+        /* A rest longer than ten minutes is somebody who walked away, not a rest. Capping keeps
+         * the readout a sane width instead of letting it grow into other things. */
+        return (elapsed > 600000u) ? 600u : (uint16_t)(elapsed / 1000u);
+    }
+};
+
 /* --------------------------------------------------------------- colours ---- */
 
 /* The panel takes RGB565 and the web interface's colour pickers speak "#rrggbb", so both

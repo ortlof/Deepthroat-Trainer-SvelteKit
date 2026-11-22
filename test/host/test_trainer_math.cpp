@@ -509,6 +509,35 @@ int main()
         expectInt("orange survives a round trip", (int)out, 0xFD20);
     }
 
+    /* ---- the rest between reps -------------------------------------------------- */
+    {
+        RepBreak rest;
+        expectInt("nothing runs before a rep", rest.seconds(1000), 0);
+        expectInt("and no break starts with no reps done", rest.update(true, true, 0, 1000) ? 1 : 0, 0);
+        expectInt("standing at the start is not a break", rest.running ? 1 : 0, 0);
+
+        expectInt("a break starts once a rep is done and we are back out", rest.update(true, true, 1, 5000) ? 1 : 0, 1);
+        expectInt("and it is running", rest.running ? 1 : 0, 1);
+        expectInt("immediately it reads zero", rest.seconds(5000), 0);
+        expectInt("after one second it reads one", rest.seconds(6000), 1);
+        expectInt("and it keeps counting", rest.seconds(12500), 7);
+        expectInt("no second start while it runs", rest.update(true, true, 1, 7000) ? 1 : 0, 0);
+        expectInt("and the clock is not restarted", rest.seconds(9000), 4);
+
+        expectInt("the next rep ends it", rest.update(false, true, 2, 10000) ? 1 : 0, 0);
+        expectInt("so it reads zero again", rest.seconds(10000), 0);
+        expectInt("and stays stopped", rest.seconds(30000), 0);
+
+        expectInt("a later arming starts a fresh break", rest.update(true, true, 2, 40000) ? 1 : 0, 1);
+        expectInt("which counts from there", rest.seconds(43000), 3);
+
+        expectInt("ending the session stops it", rest.update(true, false, 2, 44000) ? 1 : 0, 0);
+        expectInt("and reads zero", rest.seconds(45000), 0);
+
+        expectInt("a long absence is capped", rest.update(true, true, 3, 100000) ? 1 : 0, 1);
+        expectInt("at ten minutes", rest.seconds(100000 + 900000), 600);
+    }
+
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);
     return failures == 0 ? 0 : 1;
 }
