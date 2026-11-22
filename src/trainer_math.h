@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 
 namespace trainer
@@ -490,6 +491,125 @@ inline bool fxPulseOn(uint32_t nowMs, uint32_t periodMs)
         return true;
     }
     return ((nowMs / periodMs) & 1u) != 0u;
+}
+
+/* ------------------------------------------------------------------- menu ---- */
+
+/* The panel menu: play mode and level, picked with a finger on the glass.
+
+ * One source of truth for the geometry. The display draws the rows with these numbers and
+ * the touch handler hit-tests with the same ones, so a row cannot be painted in one place
+ * and picked in another. The y values are offsets from the panel centre, positive down. */
+
+constexpr int kMenuRowMode = 0;
+constexpr int kMenuRowLevel = 1;
+constexpr int kMenuRowClose = 2;
+constexpr int kMenuRowCount = 3;
+
+constexpr float kMenuRowTopY = -104.0f;
+constexpr float kMenuRowHeight = 62.0f;
+constexpr float kMenuRowGap = 10.0f;
+constexpr float kMenuRowHalfWidth = 150.0f;
+
+/* The button that opens the menu: a chip below the hold bar, inside the ring. */
+constexpr float kMenuButtonHalfWidth = 66.0f;
+constexpr float kMenuButtonHalfHeight = 20.0f;
+constexpr float kMenuButtonCentreY = 168.0f;
+
+inline float menuRowTop(int row)
+{
+    return kMenuRowTopY + (float)row * (kMenuRowHeight + kMenuRowGap);
+}
+
+/* Which row a finger at dy (relative to the centre) is on, or -1 for none. The gap
+ * between two rows is a miss on purpose. */
+inline int menuRowAt(float dy)
+{
+    for (int row = 0; row < kMenuRowCount; ++row)
+    {
+        const float top = menuRowTop(row);
+        if (dy >= top && dy <= top + kMenuRowHeight)
+        {
+            return row;
+        }
+    }
+    return -1;
+}
+
+/* The menu button: a rounded rectangle centred on the panel's vertical axis. */
+inline bool menuButtonHit(float dx, float dy)
+{
+    return (dx >= -kMenuButtonHalfWidth && dx <= kMenuButtonHalfWidth &&
+            dy >= kMenuButtonCentreY - kMenuButtonHalfHeight &&
+            dy <= kMenuButtonCentreY + kMenuButtonHalfHeight);
+}
+
+/* A row has two halves where that makes sense: the left third steps back, the rest
+ * steps forward. Returns -1 for back, +1 for forward. */
+inline int menuStepDirection(float dx)
+{
+    return (dx < -(kMenuRowHalfWidth / 3.0f)) ? -1 : 1;
+}
+
+/* --------------------------------------------------------------- play mode ---- */
+
+constexpr int kPlayModeHold = 0; /* hold the goal */
+constexpr int kPlayModeReps = 1; /* count reps */
+constexpr int kPlayModeCount = 2;
+
+inline int clampPlayMode(int mode)
+{
+    return (mode < 0) ? 0 : ((mode >= kPlayModeCount) ? (kPlayModeCount - 1) : mode);
+}
+
+/* The menu shows one mode per tap, so the panel can always reach both. */
+inline int nextPlayMode(int mode)
+{
+    return (clampPlayMode(mode) + 1) % kPlayModeCount;
+}
+
+inline const char *playModeName(int mode)
+{
+    return (clampPlayMode(mode) == kPlayModeReps) ? "COUNT REPS" : "HOLD GOAL";
+}
+
+/* ---------------------------------------------------------------- the level ---- */
+
+/* Level stepping from the panel: free play (0) and then 1..count, wrapping in both
+ * directions. Anything out of range is treated as free play, so a level list that shrank
+ * cannot leave the menu pointing at a level the game no longer has. */
+inline int menuLevelStep(int level, int count, int direction)
+{
+    if (count < 1)
+    {
+        return 0;
+    }
+    const int stops = count + 1; /* free play is one more stop on the dial */
+    int index = ((level < 1) || (level > count)) ? 0 : level;
+    index = (index + ((direction < 0) ? (stops - 1) : 1)) % stops;
+    return index;
+}
+
+/* The menu changes the game, so it is closed to the finger while a session runs. One
+ * place decides this, and both the button and the level rows ask it. */
+inline bool menuUsable(bool sessionActive)
+{
+    return !sessionActive;
+}
+
+/* The level as the menu writes it: free play is 0, which is exactly what the goal level
+ * field means everywhere else. */
+inline int menuLevelLabel(int level, int count, char *buffer, size_t size)
+{
+    if ((level < 1) || (level > count))
+    {
+        snprintf(buffer, size, "FREE");
+    }
+    else
+    {
+        snprintf(buffer, size, "%d", level);
+    }
+    return 0;
 }
 
 } /* namespace trainer */

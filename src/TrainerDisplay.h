@@ -65,6 +65,16 @@ struct TrainerScreen
     bool batteryKnown = false;
     float batteryV = 0.0f;
 
+    /* The panel menu: play mode and level, picked with a finger. The menu is only open
+     * when no session runs, so it never competes with a running set for the glass. */
+    bool menuOpen = false;
+    bool menuLocked = false; /* a session runs: the button refuses and says so */
+    uint8_t menuMode = 0;
+    int menuLevel = 0;    /* 0 = free play */
+    uint8_t levelCount = 5;
+    char menuNotice[28] = "";  /* shown for a couple of seconds after a refused tap */
+    uint32_t menuNoticeMs = 0;
+
     /* One line at the bottom: network and sensor. A plain char array, because
      * this struct is copied between the trainer task and the display task and
      * must stay a POD (see the snapshot lock in main.cpp). */
@@ -121,7 +131,18 @@ private:
 
     void eraseBox(int16_t cx, int16_t cy, int16_t halfWidth, int16_t halfHeight);
     void drawCentered(const GFXfont *font, uint8_t scale, int16_t cx, int16_t cy, const char *text, uint16_t color);
+    /* The same call, but placed by its left edge: the menu's labels sit on one side and
+     * its values on the other. */
+    void drawLeftAligned(const GFXfont *font, uint8_t scale, int16_t left, int16_t cy, const char *text, uint16_t color);
     static int16_t textWidth(const GFXfont *font, const char *text, uint8_t scale);
+
+    /* The menu: a chip under the hold bar opens it, the rows pick a mode and a level, and
+     * a long press closes it. The chip is part of the static frame, so it is drawn with
+     * the panel and only repainted when its locked state changes. */
+    void drawMenuButton(const TrainerScreen &screen);
+    void drawMenu(const TrainerScreen &screen, uint32_t nowMs);
+    void drawMenuRow(int row, const char *label, const char *value, uint16_t valueColor);
+    void drawMenuNotice(const TrainerScreen &screen, uint32_t nowMs);
 
     Arduino_XL9535SWSPI *_bus = nullptr;
     Arduino_ESP32RGBPanel *_panel = nullptr;
@@ -162,4 +183,15 @@ private:
      * while it is written. */
     bool _fxCleared = false;
     int16_t _fxRingDrawn[TRAINER_FX_RINGS] = {-1, -1, -1};
+
+    /* The menu's own caches: the panel is scanned out while it is written, so a menu that
+     * repainted itself every frame would flash. It clears once when it opens and after
+     * that only a row whose value changed is painted again. */
+    bool _menuDrawn = false;
+    int _menuDrawnMode = -1;
+    int _menuDrawnLevel = -9999;
+    int _menuDrawnCount = -1;
+    int _menuButtonLocked = -1; /* -1 = nothing drawn yet */
+    char _menuDrawnNotice[sizeof(((TrainerScreen *)nullptr)->menuNotice)] = "";
+    int16_t _lastMenuNoticeWidth = 0;
 };

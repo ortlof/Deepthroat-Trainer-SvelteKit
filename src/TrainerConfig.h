@@ -183,6 +183,7 @@
  * this panel scans its framebuffer out while it is written and a full clear every frame is
  * visible as the whole panel flashing. */
 #define TRAINER_REP_FX_MS 2600     /* a rep counted: the count, and the way back out */
+#define TRAINER_MENU_NOTICE_MS 2500 /* how long a refused menu tap shows its reason */
 #define TRAINER_PRAISE_FX_MS 8000  /* the set is finished: the praise animation */
 #define TRAINER_FX_RINGS 3         /* rings in the burst, each a little later than the last */
 #define TRAINER_FX_BURST_RADIUS 205

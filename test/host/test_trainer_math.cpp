@@ -324,6 +324,67 @@ int main()
         expectTrue("a zero period stays on", fxPulseOn(1234, 0));
     }
 
+    /* ---- the panel menu: play mode, level, and where a finger lands ------- */
+    expectInt("the mode steps from hold to reps", nextPlayMode(kPlayModeHold), kPlayModeReps);
+    expectInt("and wraps back to hold", nextPlayMode(kPlayModeReps), kPlayModeHold);
+    expectInt("a mode below the range clamps to hold", clampPlayMode(-3), kPlayModeHold);
+    expectInt("a mode above the range clamps", clampPlayMode(9), kPlayModeCount - 1);
+    expectStr("the hold mode is named", playModeName(kPlayModeHold), "HOLD GOAL");
+    expectStr("the rep mode is named", playModeName(kPlayModeReps), "COUNT REPS");
+
+    /* Every row is reachable, and the gaps between them are misses rather than a
+     * neighbouring row's business. */
+    expectInt("the first row is hit at its middle", menuRowAt(menuRowTop(kMenuRowMode) + kMenuRowHeight / 2.0f), kMenuRowMode);
+    expectInt("the level row is its own row", menuRowAt(menuRowTop(kMenuRowLevel) + 1.0f), kMenuRowLevel);
+    expectInt("the close row is the last one", menuRowAt(menuRowTop(kMenuRowClose) + kMenuRowHeight - 1.0f), kMenuRowClose);
+    expectInt("above every row is a miss", menuRowAt(menuRowTop(kMenuRowMode) - 1.0f), -1);
+    expectInt("the gap between two rows is a miss", menuRowAt(menuRowTop(kMenuRowMode) + kMenuRowHeight + 1.0f), -1);
+    expectInt("below every row is a miss", menuRowAt(menuRowTop(kMenuRowClose) + kMenuRowHeight + 1.0f), -1);
+
+    /* Geometry guards: everything the menu draws has to land inside the visible round
+     * window, and the chip has to sit clear of the hold bar it is drawn under. */
+    const float visibleRadius = 228.0f;
+    expectTrue("the title is inside the round window", (kMenuRowTopY + 20.0f) > -visibleRadius);
+    expectTrue("the last row is inside the round window", (menuRowTop(kMenuRowCount - 1) + kMenuRowHeight) < visibleRadius);
+    expectTrue("the hint line is inside the round window", (menuRowTop(kMenuRowCount) + 30.0f) < visibleRadius);
+    expectTrue("the chip is inside the round window", (kMenuButtonCentreY + kMenuButtonHalfHeight) < visibleRadius);
+
+    /* The chip: a tap on it opens the menu, a tap beside it starts a session instead. */
+    expectTrue("the middle of the chip is a hit", menuButtonHit(0.0f, kMenuButtonCentreY));
+    expectTrue("the far edge of the chip is still a hit", menuButtonHit(kMenuButtonHalfWidth - 1.0f, kMenuButtonCentreY));
+    expectTrue("beside the chip is a miss", !menuButtonHit(kMenuButtonHalfWidth + 2.0f, kMenuButtonCentreY));
+    expectTrue("above the chip is a miss", !menuButtonHit(0.0f, kMenuButtonCentreY - kMenuButtonHalfHeight - 2.0f));
+
+    /* The level dial: free play, then 1..count, and it turns both ways. */
+    expectInt("from free play, forward is level 1", menuLevelStep(0, 5, 1), 1);
+    expectInt("forward walks up the levels", menuLevelStep(3, 5, 1), 4);
+    expectInt("the last level wraps round to free play", menuLevelStep(5, 5, 1), 0);
+    expectInt("from free play, back is the last level", menuLevelStep(0, 5, -1), 5);
+    expectInt("back from level 1 is free play", menuLevelStep(1, 5, -1), 0);
+    expectInt("a level the game no longer has reads as free play", menuLevelStep(9, 5, 1), 1);
+    expectInt("with no levels at all the dial stays at free play", menuLevelStep(0, 0, 1), 0);
+    expectInt("with ten levels it reaches level 10", menuLevelStep(9, 10, 1), 10);
+    expectInt("one level climbs and then wraps", menuLevelStep(1, 1, 1), 0);
+
+    /* A row's left third steps back, the rest steps forward. */
+    expectInt("the left edge of a row goes back", menuStepDirection(-kMenuRowHalfWidth + 1.0f), -1);
+    expectInt("the middle of a row goes forward", menuStepDirection(0.0f), 1);
+    expectInt("the right edge of a row goes forward", menuStepDirection(kMenuRowHalfWidth - 1.0f), 1);
+
+    /* The lock, which is the whole point of the feature. */
+    expectTrue("the menu may be used while nothing plays", menuUsable(false));
+    expectTrue("the menu refuses while a play runs", !menuUsable(true));
+
+    {
+        char label[16];
+        menuLevelLabel(0, 5, label, sizeof(label));
+        expectStr("free play is labelled", label, "FREE");
+        menuLevelLabel(3, 5, label, sizeof(label));
+        expectStr("a level is numbered", label, "3");
+        menuLevelLabel(9, 5, label, sizeof(label));
+        expectStr("a level out of range reads as free play", label, "FREE");
+    }
+
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);
     return failures == 0 ? 0 : 1;
 }

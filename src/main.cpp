@@ -145,6 +145,19 @@ static void buildSnapshot();
 static void publishState();
 static float readBatteryVolts();
 static void handleTouch();
+static void openMenu();
+static void closeMenu();
+static void applyMenuPress(int row, float dx);
+static void refuseWhilePlaying(const char *what);
+
+/* The panel menu. Its open flag is published in the state, so a client can see what the
+ * glass is doing and can drive the same code path a finger uses - which is how the menu is
+ * tested without a person standing at the board. The notice is the answer a refused tap
+ * gets; the panel shows it for a couple of seconds. */
+#define TRAINER_PANEL_ORIGIN "trainerPanel"
+static bool menuOpen = false;
+static char menuNotice[28] = "";
+static uint32_t menuNoticeMs = 0;
 static bool applyRadioSettings();
 static bool radioSettingsApplied = false;
 static void tryPlainJoin();
@@ -663,6 +676,8 @@ struct TrainerCommand
     bool zero;
     bool resetPeak;
     int goalLevel;
+    bool menuOpen;
+    int menuPress;
 };
 
 static void applyTrainerStateToSession(const String &originId)
@@ -679,7 +694,9 @@ static void applyTrainerStateToSession(const String &originId)
         command.sessionStop = state.sessionStop;
         command.zero = state.zero;
         command.resetPeak = state.resetPeak;
-        command.goalLevel = state.goalLevel; });
+        command.goalLevel = state.goalLevel;
+        command.menuOpen = state.menuOpen;
+        command.menuPress = state.menuPress; });
 
     if (command.sessionStart)
     {
@@ -742,6 +759,46 @@ static void applyTrainerStateToSession(const String &originId)
         setNotice(buffer);
     }
 
+    /* The panel menu. The panel sets this flag itself; a client may set it too, which is
+     * how the menu is exercised without a finger on the glass. Both go through the same
+     * open, which refuses while a session runs. */
+    if (command.menuOpen != menuOpen)
+    {
+        if (command.menuOpen)
+        {
+            openMenu();
+        }
+        else
+        {
+            closeMenu();
+        }
+        /* openMenu() may have refused. Publish what really happened rather than leaving a
+         * client believing the menu came up. */
+        const bool wanted = menuOpen;
+        trainerStateService.update([wanted](TrainerState &state)
+                                   {
+            state.menuOpen = wanted;
+            return StateUpdateResult::CHANGED; },
+                                   TRAINER_DEVICE_ORIGIN);
+    }
+
+    /* A row press, consumed the same way session_start is: cleared first, then acted on, so
+     * the same press cannot land twice. A row means nothing unless the menu is on the
+     * screen, exactly as it does under a finger: both inputs run the same path. */
+    if (command.menuPress >= 0)
+    {
+        const int row = command.menuPress;
+        trainerStateService.update([](TrainerState &state)
+                                   {
+            state.menuPress = -1;
+            return StateUpdateResult::CHANGED; },
+                                   TRAINER_DEVICE_ORIGIN);
+        if (menuOpen)
+        {
+            applyMenuPress(row, 0.0f);
+        }
+    }
+
     /* display_on is a state field only: the display task reads it, so nothing to
      * do here. */
 }
@@ -767,6 +824,15 @@ static void startPanelEffect(uint8_t kind, uint16_t count, const char *text)
 static void buildSnapshot()
 {
     TrainerScreen screen;
+
+    /* A play that is running owns the glass. The menu closes itself the moment a set
+     * starts, whichever way it was started - a tap on the panel, the web interface, or a
+     * level that climbed into the next one. */
+    if (menuOpen && session.active())
+    {
+        closeMenu();
+        setNotice("menu closed - a play is running");
+    }
 
     screen.depthMm = depthMm;
     screen.peakMm = peakMm;
@@ -798,6 +864,17 @@ static void buildSnapshot()
     screen.repMode = playModeReps();
     screen.repCount = repCounter.count;
     screen.repTarget = cfg().reps_target;
+
+    /* The panel menu. Its own flag and notice come from this task; the mode and the level
+     * it shows are the ones already in use, so the menu never displays a second truth. */
+    screen.menuOpen = menuOpen;
+    screen.menuLocked = !trainer::menuUsable(session.active());
+    screen.menuMode = (uint8_t)trainer::clampPlayMode((int)cfg().play_mode);
+    screen.menuLevel = lastGoalLevel;
+    screen.levelCount = (uint8_t)levelCount();
+    strncpy(screen.menuNotice, menuNotice, sizeof(screen.menuNotice) - 1);
+    screen.menuNotice[sizeof(screen.menuNotice) - 1] = '\0';
+    screen.menuNoticeMs = menuNoticeMs;
 
     /* A panel animation in flight. Its start time lives in the state, so it survives
      * this snapshot being rebuilt ten times a second and ends on its own clock. */
@@ -903,6 +980,11 @@ static void publishState()
         if (fabsf(state.sessionDeepSeconds - summary.deepSeconds) >= 0.2f) { state.sessionDeepSeconds = summary.deepSeconds; changed = true; }
         if (state.sessionHolds != summary.holds) { state.sessionHolds = summary.holds; changed = true; }
         if (state.playMode != cfg().play_mode) { state.playMode = cfg().play_mode; changed = true; }
+        /* The menu's own view: whether it is up, and whether a set is running that makes it
+         * refuse. Both are published so the glass can be read from the web interface. */
+        if (state.menuOpen != menuOpen) { state.menuOpen = menuOpen; changed = true; }
+        const bool menuLocked = !trainer::menuUsable(sessionActive);
+        if (state.menuLocked != menuLocked) { state.menuLocked = menuLocked; changed = true; }
         if (state.repTarget != cfg().reps_target) { state.repTarget = cfg().reps_target; changed = true; }
         if (state.repCount != repCounter.count) { state.repCount = repCounter.count; changed = true; }
         if (state.repArmed != repCounter.armed) { state.repArmed = repCounter.armed; changed = true; }
@@ -946,6 +1028,104 @@ static void publishState()
                                TRAINER_DEVICE_ORIGIN);
 }
 
+/* ------------------------------------------------------------------- menu ---- */
+
+/* Anything the finger can change lands here while a set runs: the menu rows, the chip that
+ * opens them, and the long press that zeros the depth scale. All of it decides what the set
+ * counts, so all of it is fixed for the length of a set - changing the goal or the zero under
+ * a running play makes the numbers meaningless, and the zero silently moves every reading. */
+static void refuseWhilePlaying(const char *what)
+{
+    snprintf(menuNotice, sizeof(menuNotice), "PLAYING - %s LOCKED", what);
+    menuNoticeMs = millis();
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "%s locked while a play is running", what);
+    setNotice(buffer);
+    Serial.printf("[menu] refused: a session is running (%s)\n", what);
+}
+
+static void closeMenu()
+{
+    /* Nothing to repaint by hand: the display draws the menu only while the snapshot says
+     * it is open, and it repaints the whole frame when that flag goes away. */
+    menuOpen = false;
+}
+
+static void openMenu()
+{
+    if (!trainer::menuUsable(session.active()))
+    {
+        refuseWhilePlaying("MENU");
+        return;
+    }
+    if (menuOpen)
+    {
+        return;
+    }
+    menuOpen = true;
+    setNotice("menu open");
+    Serial.println("[menu] open");
+}
+
+static void applyMenuPress(int row, float dx)
+{
+    if (!trainer::menuUsable(session.active()))
+    {
+        refuseWhilePlaying("MENU");
+        return;
+    }
+
+    switch (row)
+    {
+    case trainer::kMenuRowMode:
+    {
+        const int mode = trainer::nextPlayMode((int)cfg().play_mode);
+        trainerSettingsService.update([mode](TrainerSettings &value)
+                                      {
+            value.play_mode = (uint8_t)mode;
+            return StateUpdateResult::CHANGED; },
+                                      TRAINER_PANEL_ORIGIN);
+        char buffer[48];
+        snprintf(buffer, sizeof(buffer), "play: %s", trainer::playModeName(mode));
+        setNotice(buffer);
+        Serial.printf("[menu] %s\n", buffer);
+        break;
+    }
+    case trainer::kMenuRowLevel:
+    {
+        /* The left third of the row steps back, the rest steps forward, so a level can be
+         * reached from either side without walking the whole way round. */
+        const int next = trainer::menuLevelStep(lastGoalLevel, levelCount(), trainer::menuStepDirection(dx));
+        /* A distinct origin: the panel is a local controller, and the command handler
+         * ignores the origin the device publishes its own telemetry under. */
+        trainerStateService.update([next](TrainerState &state)
+                                   {
+            state.goalLevel = next;
+            return StateUpdateResult::CHANGED; },
+                                   TRAINER_PANEL_ORIGIN);
+        char buffer[48];
+        if (next == 0)
+        {
+            snprintf(buffer, sizeof(buffer), "level: free play");
+        }
+        else
+        {
+            snprintf(buffer, sizeof(buffer), "level %d of %d", next, levelCount());
+        }
+        setNotice(buffer);
+        Serial.printf("[menu] %s\n", buffer);
+        break;
+    }
+    case trainer::kMenuRowClose:
+        closeMenu();
+        setNotice("menu closed");
+        Serial.println("[menu] closed");
+        break;
+    default:
+        break;
+    }
+}
+
 /* ------------------------------------------------------------------ touch ---- */
 
 static void handleTouch()
@@ -958,9 +1138,47 @@ static void handleTouch()
 
     lastActivityMs = millis();
 
+    /* The menu is the only thing that changes what the trainer plays, and a long press is
+     * the way out of it. The other long press (zero the reference) keeps its meaning when
+     * the menu is closed. */
     if (event == TrainerTouch::Event::longPress)
     {
+        if (menuOpen)
+        {
+            closeMenu();
+            setNotice("menu closed");
+            return;
+        }
+        /* The long press solves the depth zero, which moves every reading the panel shows
+         * and every goal the play is measuring against. Under a running set that is a
+         * change to the game, so it is refused like the menu rows. */
+        if (!trainer::menuUsable(session.active()))
+        {
+            refuseWhilePlaying("ZERO");
+            return;
+        }
         zeroReference();
+        return;
+    }
+
+    const float dx = (float)touch.x() - (float)cfg().panel_centre_x;
+    const float dy = (float)touch.y() - (float)cfg().panel_centre_y;
+
+    if (menuOpen)
+    {
+        const int row = trainer::menuRowAt(dy);
+        if (row >= 0)
+        {
+            applyMenuPress(row, dx);
+        }
+        return; /* a tap that misses every row leaves the menu up */
+    }
+
+    /* The chip under the hold bar opens the menu. While a set runs it refuses, and says so
+     * on the panel: a control that does nothing at all reads as broken. */
+    if (trainer::menuButtonHit(dx, dy))
+    {
+        openMenu();
         return;
     }
 

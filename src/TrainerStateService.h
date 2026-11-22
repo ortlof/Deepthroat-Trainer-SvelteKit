@@ -47,6 +47,16 @@ public:
     int goalLevel = 0;      /* 0 = free play, 1..3 = the goal to hold */
     bool displayOn = true;
 
+    /* --- the panel menu --- */
+    /* menu_open is both ways: the panel publishes whether its menu is up, and a client may
+     * set it to drive the same code path (which is how the menu is tested without a finger).
+     * menu_press is a transient command: a row index, or -1 for nothing. It is cleared when
+     * it has been acted on, the same way session_start is. */
+    bool menuOpen = false;
+    int8_t menuPress = -1;
+    /* Published only: true while a session runs, which is when the menu refuses. */
+    bool menuLocked = false;
+
     /* --- what the sensor sees --- */
     bool sensorPresent = false;
     int sensorModelId = 0;
@@ -143,6 +153,10 @@ public:
         root["reset_peak"] = state.resetPeak;
         root["goal_level"] = state.goalLevel;
         root["display_on"] = state.displayOn;
+        /* the panel menu */
+        root["menu_open"] = state.menuOpen;
+        root["menu_press"] = state.menuPress;
+        root["menu_locked"] = state.menuLocked;
 
         /* sensor */
         root["sensor_present"] = state.sensorPresent;
@@ -224,16 +238,22 @@ public:
         int goalLevel = root["goal_level"] | state.goalLevel;
         goalLevel = constrain(goalLevel, 0, 10); /* 0 = free play, 1..10 = the level list */
         const bool displayOn = root["display_on"] | state.displayOn;
+        const bool menuOpen = root["menu_open"] | state.menuOpen;
+        int menuPress = root["menu_press"] | (int)state.menuPress;
+        menuPress = constrain(menuPress, -1, 2); /* -1 = nothing, 0..2 = a menu row */
 
         /* A panel effect is always taken as a change, so the same animation can be
          * started twice in a row. The client only names the effect and its number; the
          * device stamps the start time, so a client cannot leave the panel stuck. */
-        const bool effectRequested = root.containsKey("fx");
+        /* isNull() rather than containsKey(): the latter is deprecated in ArduinoJson 7, which
+         * this framework ships. A member that was not sent reads as null. */
+        const bool effectRequested = !root["fx"].isNull();
 
         if (!effectRequested &&
             sessionStart == state.sessionStart && sessionStop == state.sessionStop &&
             zero == state.zero && resetPeak == state.resetPeak &&
-            goalLevel == state.goalLevel && displayOn == state.displayOn)
+            goalLevel == state.goalLevel && displayOn == state.displayOn &&
+            menuOpen == state.menuOpen && (int8_t)menuPress == state.menuPress)
         {
             return StateUpdateResult::UNCHANGED;
         }
@@ -244,6 +264,8 @@ public:
         state.resetPeak = resetPeak;
         state.goalLevel = goalLevel;
         state.displayOn = displayOn;
+        state.menuOpen = menuOpen;
+        state.menuPress = (int8_t)menuPress;
 
         if (effectRequested)
         {

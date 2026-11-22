@@ -232,6 +232,7 @@ void TrainerDisplay::drawStatic()
     _drawnInZone = false;
     _lastSessionActive = false;
     _batteryBucket = -2; /* the screen is black again: the symbol has to be redrawn */
+    _menuButtonLocked = -1; /* so is the menu chip, in whichever state it is now */
 }
 
 void TrainerDisplay::drawGauge(float gauge, bool inZone)
@@ -624,6 +625,146 @@ void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, flo
     drawCentered(&FreeSans9pt7b, 1, CX, CY + 70, tail, COL_DIM);
 }
 
+/* ------------------------------------------------------------------- menu ---- */
+
+void TrainerDisplay::drawLeftAligned(const GFXfont *font, uint8_t scale, int16_t left, int16_t cy, const char *text, uint16_t color)
+{
+    /* drawCentered already places the baseline correctly for these fonts. */
+    drawCentered(font, scale, left + textWidth(font, text, scale) / 2, cy, text, color);
+}
+
+/* The chip that opens the menu, under the hold bar. It is part of the static frame: it
+ * is drawn with the panel and only repainted when a session starts or ends, because that
+ * is the one thing that changes about it. */
+void TrainerDisplay::drawMenuButton(const TrainerScreen &screen)
+{
+    const int locked = screen.menuLocked ? 1 : 0;
+    if (_menuButtonLocked == locked)
+    {
+        return;
+    }
+    _menuButtonLocked = locked;
+
+    const int16_t halfW = (int16_t)trainer::kMenuButtonHalfWidth;
+    const int16_t halfH = (int16_t)trainer::kMenuButtonHalfHeight;
+    const int16_t cy = CY + (int16_t)trainer::kMenuButtonCentreY;
+    const uint16_t edge = screen.menuLocked ? COL_TRACK : COL_ACCENT;
+    const uint16_t ink = screen.menuLocked ? COL_TRACK : COL_TEXT;
+
+    _gfx->fillRoundRect(CX - halfW, cy - halfH, halfW * 2, halfH * 2, halfH, COL_BG);
+    _gfx->drawRoundRect(CX - halfW, cy - halfH, halfW * 2, halfH * 2, halfH, edge);
+    drawCentered(&FreeSansBold12pt7b, 1, CX, cy, "MENU", ink);
+}
+
+/* One row: a name on the left, its value on the right. */
+void TrainerDisplay::drawMenuRow(int row, const char *label, const char *value, uint16_t valueColor)
+{
+    const int16_t halfW = (int16_t)trainer::kMenuRowHalfWidth;
+    const int16_t height = (int16_t)trainer::kMenuRowHeight;
+    const int16_t cy = CY + (int16_t)(trainer::menuRowTop(row) + trainer::kMenuRowHeight / 2.0f);
+
+    _gfx->fillRoundRect(CX - halfW, cy - height / 2, halfW * 2, height, 12, COL_TRACK);
+    drawLeftAligned(&FreeSansBold12pt7b, 1, CX - halfW + 16, cy, label, COL_DIM);
+    drawLeftAligned(&FreeSansBold12pt7b, 1, CX + halfW - 16 - textWidth(&FreeSansBold12pt7b, value, 1),
+                    cy, value, valueColor);
+}
+
+/* The overlay. It clears the panel once, when it opens, and after that paints a row only
+ * when that row's value changed: a per-frame clear is what makes this panel flash, and
+ * the menu is otherwise a still picture. */
+void TrainerDisplay::drawMenu(const TrainerScreen &screen, uint32_t nowMs)
+{
+    (void)nowMs;
+
+    if (!_menuDrawn)
+    {
+        _gfx->fillScreen(COL_BG);
+        drawCentered(&FreeSansBold12pt7b, 1, CX, CY - 148, "MENU", COL_TEXT);
+
+        const int level = screen.menuLevel;
+        const int count = (int)screen.levelCount;
+        char text[24];
+        char label[16];
+        trainer::menuLevelLabel(level, count, label, sizeof(label));
+        if ((level >= 1) && (level <= count))
+        {
+            snprintf(text, sizeof(text), "%s OF %d", label, count);
+        }
+        else
+        {
+            snprintf(text, sizeof(text), "FREE PLAY");
+        }
+
+        drawMenuRow(trainer::kMenuRowMode, "PLAY", trainer::playModeName(screen.menuMode),
+                    screen.menuLocked ? COL_DIM : COL_ACCENT);
+        drawMenuRow(trainer::kMenuRowLevel, "LEVEL", text, screen.menuLocked ? COL_DIM : COL_ACCENT);
+        drawMenuRow(trainer::kMenuRowClose, "", "CLOSE", COL_DIM);
+        drawCentered(&FreeSans9pt7b, 1, CX, CY + (int16_t)trainer::menuRowTop(trainer::kMenuRowCount) + 30,
+                     "TAP A ROW   LONG PRESS CLOSES", COL_DIM);
+
+        _menuDrawnMode = (int)screen.menuMode;
+        _menuDrawnLevel = level;
+        _menuDrawnCount = count;
+        _menuDrawn = true;
+        _valid = false; /* the normal layout must be painted again when the menu closes */
+        return;
+    }
+
+    /* A value that changed since the menu opened. */
+    if ((_menuDrawnMode != (int)screen.menuMode) || (_menuDrawnLevel != screen.menuLevel) ||
+        (_menuDrawnCount != (int)screen.levelCount))
+    {
+        const int level = screen.menuLevel;
+        const int count = (int)screen.levelCount;
+        char text[24];
+        char label[16];
+        trainer::menuLevelLabel(level, count, label, sizeof(label));
+        if ((level >= 1) && (level <= count))
+        {
+            snprintf(text, sizeof(text), "%s OF %d", label, count);
+        }
+        else
+        {
+            snprintf(text, sizeof(text), "FREE PLAY");
+        }
+        drawMenuRow(trainer::kMenuRowMode, "PLAY", trainer::playModeName(screen.menuMode), COL_ACCENT);
+        drawMenuRow(trainer::kMenuRowLevel, "LEVEL", text, COL_ACCENT);
+        _menuDrawnMode = (int)screen.menuMode;
+        _menuDrawnLevel = level;
+        _menuDrawnCount = count;
+    }
+}
+
+/* "the menu is closed while a play runs" - the answer a tap on the chip gets during a
+ * session. It shows for a few seconds and then removes itself. */
+void TrainerDisplay::drawMenuNotice(const TrainerScreen &screen, uint32_t nowMs)
+{
+    const int16_t cy = CY + 118;
+    const bool fresh = (screen.menuNoticeMs != 0) &&
+                       ((nowMs - screen.menuNoticeMs) < TRAINER_MENU_NOTICE_MS);
+
+    if (fresh && (strcmp(_menuDrawnNotice, screen.menuNotice) != 0))
+    {
+        const int16_t halfWidth = _lastMenuNoticeWidth / 2 + 6;
+        eraseBox(CX, cy, halfWidth, 12);
+        _menuDrawnNotice[0] = '\0';
+        if (screen.menuNotice[0] != '\0')
+        {
+            drawCentered(&FreeSans9pt7b, 1, CX, cy, screen.menuNotice, COL_WARN);
+            snprintf(_menuDrawnNotice, sizeof(_menuDrawnNotice), "%s", screen.menuNotice);
+        }
+        _lastMenuNoticeWidth = textWidth(&FreeSans9pt7b, screen.menuNotice, 1);
+        return;
+    }
+
+    if (!fresh && (_menuDrawnNotice[0] != '\0'))
+    {
+        eraseBox(CX, cy, _lastMenuNoticeWidth / 2 + 6, 12);
+        _menuDrawnNotice[0] = '\0';
+        _lastMenuNoticeWidth = 0;
+    }
+}
+
 void TrainerDisplay::render(const TrainerScreen &screen)
 {
     if (!_present)
@@ -668,6 +809,24 @@ void TrainerDisplay::render(const TrainerScreen &screen)
         _valid = true;
     }
 
+    /* The menu owns the panel while it is open. It is only ever open with no session
+     * running, so the two never fight over the glass. */
+    if (screen.menuOpen)
+    {
+        drawMenu(screen, now);
+        _gfx->flush();
+        _frames++;
+        return;
+    }
+
+    if (_menuDrawn)
+    {
+        _menuDrawn = false;
+        _valid = false; /* the menu covered the panel: everything is painted again */
+        drawStatic();
+        _valid = true;
+    }
+
     drawGauge(screen.gauge, screen.inZone && screen.sessionActive);
     drawTicks(trainer::gaugeFraction(screen.goalMm, screen.maxDepthMm),
               trainer::gaugeFraction(screen.goalLimitMm, screen.maxDepthMm),
@@ -678,6 +837,8 @@ void TrainerDisplay::render(const TrainerScreen &screen)
     drawSessionLine(screen);
     drawHoldBar(screen);
     drawBattery(screen.batteryKnown, screen.batteryV);
+    drawMenuButton(screen);
+    drawMenuNotice(screen, now);
     drawFooter(screen);
 
     _gfx->flush();
