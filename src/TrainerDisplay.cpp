@@ -44,7 +44,9 @@ static bool g_centreChanged = false;
 #define HOLD_BAR_Y 349
 #define HOLD_BAR_W 150
 #define HOLD_BAR_H 15
-#define FOOTER_CY 392
+/* Below the menu chip: the footer erases a box around itself before drawing, and a chip in
+ * that band would be wiped off the panel every time the signal reading changes. */
+#define FOOTER_CY trainer::kPanelFooterCy
 #define HEADER_CY 100
 
 /* The box the animation's words are drawn in. It is cleared on every frame of an animation,
@@ -648,8 +650,11 @@ void TrainerDisplay::drawMenuButton(const TrainerScreen &screen)
     const int16_t halfW = (int16_t)trainer::kMenuButtonHalfWidth;
     const int16_t halfH = (int16_t)trainer::kMenuButtonHalfHeight;
     const int16_t cy = CY + (int16_t)trainer::kMenuButtonCentreY;
-    const uint16_t edge = screen.menuLocked ? COL_TRACK : COL_ACCENT;
-    const uint16_t ink = screen.menuLocked ? COL_TRACK : COL_TEXT;
+    /* Locked is dim, not invisible: a chip drawn in the track colour on a black panel is a
+     * control nobody can find, and the answer it gives (a notice that a play is running) is
+     * worth being able to ask for. */
+    const uint16_t edge = screen.menuLocked ? COL_DIM : COL_ACCENT;
+    const uint16_t ink = screen.menuLocked ? COL_DIM : COL_TEXT;
 
     _gfx->fillRoundRect(CX - halfW, cy - halfH, halfW * 2, halfH * 2, halfH, COL_BG);
     _gfx->drawRoundRect(CX - halfW, cy - halfH, halfW * 2, halfH * 2, halfH, edge);
@@ -736,10 +741,12 @@ void TrainerDisplay::drawMenu(const TrainerScreen &screen, uint32_t nowMs)
 }
 
 /* "the menu is closed while a play runs" - the answer a tap on the chip gets during a
- * session. It shows for a few seconds and then removes itself. */
+ * session. It shows for a few seconds and then removes itself. It lives above the header,
+ * which is the one band on this panel that no other element uses: at this y the visible
+ * window is 161 px either side of the centre, and the words need about 95. */
 void TrainerDisplay::drawMenuNotice(const TrainerScreen &screen, uint32_t nowMs)
 {
-    const int16_t cy = CY + 118;
+    const int16_t cy = CY - 161;
     const bool fresh = (screen.menuNoticeMs != 0) &&
                        ((nowMs - screen.menuNoticeMs) < TRAINER_MENU_NOTICE_MS);
 
@@ -837,9 +844,12 @@ void TrainerDisplay::render(const TrainerScreen &screen)
     drawSessionLine(screen);
     drawHoldBar(screen);
     drawBattery(screen.batteryKnown, screen.batteryV);
+    /* The chip is drawn after the footer on purpose. Both erase their own box, and if a
+     * later layout edit brings them into the same band, the failure should be a chip that
+     * covers the footer rather than a chip that disappears. */
+    drawFooter(screen);
     drawMenuButton(screen);
     drawMenuNotice(screen, now);
-    drawFooter(screen);
 
     _gfx->flush();
     _frames++;

@@ -349,6 +349,20 @@ int main()
     expectTrue("the hint line is inside the round window", (menuRowTop(kMenuRowCount) + 30.0f) < visibleRadius);
     expectTrue("the chip is inside the round window", (kMenuButtonCentreY + kMenuButtonHalfHeight) < visibleRadius);
 
+    /* The chip and the footer must stay in separate bands, at the panel centre this project
+     * ships (231, from TrainerSettingsService::panel_centre_y). The footer erases a box
+     * around itself before drawing, and a chip inside that band is wiped off the panel. */
+    {
+        const float centreY = 231.0f;
+        const float chipBottom = centreY + kMenuButtonCentreY + kMenuButtonHalfHeight;
+        const float footerTop = (float)kPanelFooterCy - (float)kPanelFooterBandHalf;
+        expectTrue("the footer band is below the menu chip", chipBottom < footerTop);
+        expectTrue("the chip is above the footer it would otherwise erase",
+                   (centreY + kMenuButtonCentreY + kMenuButtonHalfHeight + 4.0f) <= (float)kPanelFooterCy);
+        expectTrue("the footer is still inside the round window",
+                   ((float)kPanelFooterCy + 10.0f - centreY) < visibleRadius);
+    }
+
     /* The chip: a tap on it opens the menu, a tap beside it starts a session instead. */
     expectTrue("the middle of the chip is a hit", menuButtonHit(0.0f, kMenuButtonCentreY));
     expectTrue("the far edge of the chip is still a hit", menuButtonHit(kMenuButtonHalfWidth - 1.0f, kMenuButtonCentreY));

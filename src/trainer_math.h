@@ -514,7 +514,14 @@ constexpr float kMenuRowHalfWidth = 150.0f;
 /* The button that opens the menu: a chip below the hold bar, inside the ring. */
 constexpr float kMenuButtonHalfWidth = 66.0f;
 constexpr float kMenuButtonHalfHeight = 20.0f;
-constexpr float kMenuButtonCentreY = 168.0f;
+constexpr float kMenuButtonCentreY = 158.0f;
+
+/* The panel's absolute bottom band, kept here so it has one home. The footer sits below the
+ * menu chip, and the two must not overlap: the footer erases a box around itself before it
+ * draws, so a chip in that band is wiped off the panel every time the footer text changes.
+ * kPanelFooterBandHalf is that erase box's half height. */
+constexpr int kPanelFooterCy = 434;
+constexpr int kPanelFooterBandHalf = 16;
 
 inline float menuRowTop(int row)
 {
