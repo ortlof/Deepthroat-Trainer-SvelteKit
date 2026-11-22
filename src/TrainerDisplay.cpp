@@ -711,7 +711,11 @@ void TrainerDisplay::drawMenu(const TrainerScreen &screen, uint32_t nowMs)
         _menuDrawnLevel = level;
         _menuDrawnCount = count;
         _menuDrawn = true;
-        _valid = false; /* the normal layout must be painted again when the menu closes */
+        /* _valid is NOT cleared here. Clearing it makes the next render run drawStatic(),
+         * which fills the panel black - and because the rows below are drawn only when their
+         * value changed, the menu then vanished one frame after it appeared, leaving the bare
+         * static frame on the glass. The full repaint belongs on the way OUT, and the
+         * _menuDrawn block below render() does it. */
         return;
     }
 
