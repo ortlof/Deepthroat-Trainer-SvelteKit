@@ -59,3 +59,95 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+/*
+  A band editor: one rail with two thumbs, so a level's range reads as one thing instead of
+  two unrelated numbers. Two range inputs sit on top of each other; the input itself ignores
+  the pointer and only its thumb takes it, which is what lets either end be dragged.
+*/
+.range-dual {
+  position: relative;
+  height: 2rem;
+}
+
+.range-dual-track,
+.range-dual-fill {
+  position: absolute;
+  top: 50%;
+  height: 0.4rem;
+  border-radius: 9999px;
+  transform: translateY(-50%);
+}
+
+.range-dual-track {
+  left: 0;
+  width: 100%;
+  background: var(--color-base-300);
+}
+
+.range-dual-fill {
+  background: var(--color-primary);
+}
+
+.range-dual-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2rem;
+  margin: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  pointer-events: none;
+}
+
+.range-dual-input:focus {
+  outline: none;
+}
+
+.range-dual-input::-webkit-slider-runnable-track {
+  background: none;
+  height: 2rem;
+}
+
+.range-dual-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.42rem;
+  border-radius: 9999px;
+  border: 2px solid var(--color-base-100);
+  background: var(--color-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  cursor: grab;
+}
+
+.range-dual-input::-moz-range-track {
+  background: none;
+  height: 2rem;
+}
+
+.range-dual-input::-moz-range-thumb {
+  pointer-events: auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 9999px;
+  border: 2px solid var(--color-base-100);
+  background: var(--color-primary);
+  cursor: grab;
+}
+
+/*
+  The toast host is a fixed box in the corner and daisyUI gives it pointer-events: auto, so its
+  empty space eats every tap that lands there - on a phone that is a dead zone over the page.
+  Let it through, and keep the toasts themselves clickable.
+*/
+.toast {
+  pointer-events: none;
+}
+
+.toast > * {
+  pointer-events: auto;
+}

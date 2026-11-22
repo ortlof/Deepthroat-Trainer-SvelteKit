@@ -83,8 +83,43 @@
 		return Number(settings[`level${level}_${which}`] ?? 0);
 	}
 
-	function saveLevel(level: number, low: number, high: number) {
-		saveSettings({ [`level${level}_mm`]: low, [`level${level}_max_mm`]: high } as Partial<TrainerSettings>);
+
+	/* The band rail: 0 to 240 mm across, so both thumbs share one scale. */
+	function bandPct(value: number): number {
+		return Math.max(0, Math.min(100, (Number(value) / 240) * 100));
+	}
+
+	const MIN_BAND = 10; /* the firmware refuses anything narrower, so the rail does too */
+
+	/* Move one end of the band. The other end gives way rather than the band turning inside
+	 * out or collapsing to nothing. Called on every pointer move so the rail follows the
+	 * finger, and again when the thumb is let go, which is the call that writes to the
+	 * device. */
+	function setBand(level: number, which: 'low' | 'high', value: number, element?: HTMLInputElement) {
+		let low = levelValue(level, 'mm');
+		let high = levelValue(level, 'max_mm');
+		if (which === 'low') {
+			low = Math.max(0, Math.min(value, high - MIN_BAND));
+		} else {
+			high = Math.min(240, Math.max(value, low + MIN_BAND));
+		}
+		settings[`level${level}_mm`] = low;
+		settings[`level${level}_max_mm`] = high;
+		/* When the band refuses to follow the finger - both ends are already as close as they
+		 * may come, or the device sends a narrower band back - the state is often unchanged, so
+		 * nothing re-renders and the thumb would stay where it was let go. Put it back by hand. */
+		const wanted = which === 'low' ? low : high;
+		if (element && Number(element.value) !== wanted) {
+			element.value = String(wanted);
+		}
+	}
+
+	function saveBand(level: number, which: 'low' | 'high', value: number, element?: HTMLInputElement) {
+		setBand(level, which, value, element);
+		saveSettings({
+			[`level${level}_mm`]: levelValue(level, 'mm'),
+			[`level${level}_max_mm`]: levelValue(level, 'max_mm')
+		} as Partial<TrainerSettings>);
 	}
 
 	function setLevelCount(count: number) {
@@ -263,36 +298,47 @@
 
 	<div class="grid grid-cols-1 gap-x-8 gap-y-2 md:grid-cols-2">
 		{#each levelsInUse() as level (level)}
+			{@const low = levelValue(level, 'mm')}
+			{@const high = levelValue(level, 'max_mm')}
 			<div class="fieldset">
-				<label class="label" for="level{level}">
-					Level {level} from ({levelValue(level, 'mm').toFixed(0)} mm)
-				</label>
-				<input
-					id="level{level}"
-					type="range"
-					class="range range-primary"
-					min="5"
-					max="200"
-					step="5"
-					value={levelValue(level, 'mm')}
-					onchange={(event) => saveLevel(level, Number(event.currentTarget.value), levelValue(level, 'max_mm'))}
-				/>
-				<label class="label" for="level{level}max">
-					Level {level} counts up to ({levelValue(level, 'max_mm').toFixed(0)} mm)
-				</label>
-				<input
-					id="level{level}max"
-					type="range"
-					class="range range-secondary"
-					min="5"
-					max="240"
-					step="5"
-					value={levelValue(level, 'max_mm')}
-					onchange={(event) => saveLevel(level, levelValue(level, 'mm'), Number(event.currentTarget.value))}
-				/>
-				<div class="label">
+				<label class="label" for="band{level}">
 					<span class="badge badge-sm" style="background:{COLOURS[(level - 1) % COLOURS.length]}"></span>
-					A goal counts only between these two depths. Past the upper limit it is not the goal.
+					Level {level}: {low.toFixed(0)} to {high.toFixed(0)} mm
+					<span class="opacity-60">({(high - low).toFixed(0)} mm wide)</span>
+				</label>
+				<!-- One rail, two thumbs: the level's band, dragged by either end. -->
+				<div class="range-dual">
+					<div class="range-dual-track">
+						<div class="range-dual-fill" style="left:{bandPct(low)}%; right:{100 - bandPct(high)}%"></div>
+					</div>
+					<input
+						id="band{level}"
+						class="range-dual-input"
+						type="range"
+						min="0"
+						max="240"
+						step="5"
+						aria-label="Level {level} starts at"
+						value={low}
+						oninput={(event) => setBand(level, 'low', Number(event.currentTarget.value), event.currentTarget)}
+						onchange={(event) => saveBand(level, 'low', Number(event.currentTarget.value), event.currentTarget)}
+					/>
+					<input
+						class="range-dual-input"
+						type="range"
+						min="0"
+						max="240"
+						step="5"
+						aria-label="Level {level} counts up to"
+						value={high}
+						oninput={(event) => setBand(level, 'high', Number(event.currentTarget.value), event.currentTarget)}
+						onchange={(event) => saveBand(level, 'high', Number(event.currentTarget.value), event.currentTarget)}
+					/>
+				</div>
+				<div class="label">
+					A goal counts only between these two depths. Past the upper limit it is not the goal. The
+					two ends cannot come closer than ten millimetres, because a narrower band is a target
+					nobody can hit.
 				</div>
 			</div>
 		{/each}

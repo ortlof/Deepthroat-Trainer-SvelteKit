@@ -1,23 +1,71 @@
-"""Serve the built SvelteKit front end locally and proxy /rest to the trainer, so the layout
-can be worked on without rebuilding and flashing the firmware for every change. The device
-must be running the open (FT_SECURITY=0) image, or the proxied calls come back 401.
+"""Serve the built SvelteKit front end locally and proxy /rest to the trainer.
 
-    pio run -e t-rgb-preview        # flash the open image first, or /rest answers 401
+This is the fast loop for web interface work: a layout change costs `npm run build` and a
+reload instead of a firmware build and an OTA flash. It signs in on the device itself and adds
+the token to every proxied call, so it works against the normal, secured firmware - there is
+no need to flash the open image just to look at a page.
+
     cd interface && npm run build
-    python3 scripts/ui-preview.py   # then open http://127.0.0.1:8095/
+    python3 scripts/ui-preview.py --device http://192.168.2.248 --user admin --password admin
+    # then open http://127.0.0.1:8095/ and use a phone viewport in the browser
+
+The credentials come from the command line and are never stored. Without them, only the
+device's open image (FT_SECURITY=0) answers the proxied calls.
 """
 
+import argparse
 import http.server
-import pathlib
 import json
 import os
+import pathlib
 import socketserver
 import urllib.error
 import urllib.request
 
 ROOT = str(pathlib.Path(__file__).resolve().parent.parent / "interface" / "build")
+
 DEVICE = "http://192.168.2.248"
-PORT = 8095
+TOKEN = None
+USER = None
+PASSWORD = None
+
+
+def device_request(path, method="GET", data=None, content_type=None, token=None, timeout=25):
+    request = urllib.request.Request(DEVICE + path, data=data, method=method)
+    if content_type:
+        request.add_header("Content-Type", content_type)
+    if token:
+        request.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read(), response.headers.get("Content-Type", "application/json")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(), error.headers.get("Content-Type", "application/json")
+    except Exception as error:
+        return 502, json.dumps({"error": str(error)}).encode(), "application/json"
+
+
+def sign_in():
+    """A token for the device, or None when it has no login (the open debug image)."""
+    global TOKEN
+    status, body, _ = device_request("/rest/features", timeout=15)
+    try:
+        features = json.loads(body.decode())
+    except Exception:
+        features = {}
+    if features.get("security") is False or not USER:
+        print("device answers without a login")
+        return None
+    status, body, _ = device_request(
+        "/rest/signIn", method="POST",
+        data=json.dumps({"username": USER, "password": PASSWORD}).encode(),
+        content_type="application/json")
+    if status == 200:
+        TOKEN = json.loads(body.decode()).get("access_token")
+        print("signed in to", DEVICE)
+    else:
+        print("sign in failed:", status)
+    return TOKEN
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -25,27 +73,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=ROOT, **kwargs)
 
     def proxy(self, method):
+        global TOKEN
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
-        request = urllib.request.Request(DEVICE + self.path, data=body, method=method)
-        for header in ("Content-Type", "Authorization"):
-            if self.headers.get(header):
-                request.add_header(header, self.headers[header])
-        try:
-            with urllib.request.urlopen(request, timeout=25) as response:
-                payload = response.read()
-                status = response.status
-                content_type = response.headers.get("Content-Type", "application/json")
-        except urllib.error.HTTPError as error:
-            payload = error.read()
-            status = error.code
-            content_type = error.headers.get("Content-Type", "application/json")
-        except Exception as error:  # the device is a weak-link device: report, do not crash
-            payload = json.dumps({"error": str(error)}).encode()
-            status = 502
-            content_type = "application/json"
+        content_type = self.headers.get("Content-Type")
+        status, payload, returned_type = device_request(self.path, method, body, content_type, TOKEN)
+        if status == 401:  # tokens expire: take a new one and try the call once more
+            if sign_in():
+                status, payload, returned_type = device_request(self.path, method, body, content_type, TOKEN)
+        # The front end decides from /rest/features whether to ask for a login. This proxy
+        # signs in on its behalf, so the browser is told there is no login: otherwise it shows
+        # the password form and nothing behind it can be looked at.
+        if status == 200 and self.path.split("?")[0] == "/rest/features" and TOKEN:
+            try:
+                features = json.loads(payload.decode())
+                features["security"] = False
+                payload = json.dumps(features).encode()
+            except Exception:
+                pass
         self.send_response(status)
-        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Type", returned_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -67,7 +114,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
-    httpd.allow_reuse_address = True
-    print(f"serving {ROOT} on http://127.0.0.1:{PORT}, /rest proxied to {DEVICE}")
-    httpd.serve_forever()
+def main():
+    global DEVICE, USER, PASSWORD
+    parser = argparse.ArgumentParser(description="Serve the front end and proxy /rest to the trainer")
+    parser.add_argument("--device", default=DEVICE)
+    parser.add_argument("--user", default="admin")
+    parser.add_argument("--password", default="")
+    parser.add_argument("--port", type=int, default=8095)
+    args = parser.parse_args()
+
+    DEVICE = args.device.rstrip("/")
+    USER = args.user
+    PASSWORD = args.password
+    if not os.path.isdir(ROOT):
+        raise SystemExit(f"no build at {ROOT}: run npm run build in interface/ first")
+    print(f"device {DEVICE}, serving {ROOT}")
+    sign_in()
+
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    with socketserver.ThreadingTCPServer(("127.0.0.1", args.port), Handler) as httpd:
+        print(f"serving {ROOT} on http://127.0.0.1:{args.port}")
+        httpd.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
