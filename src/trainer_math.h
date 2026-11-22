@@ -106,8 +106,9 @@ inline float gaugeFraction(float depthMm, float maxDepthMm)
 
 /* ---------------------------------------------------------------- level ---- */
 
-/* Five goals. Level 0 is "no goal, free play"; 1..5 are the levels the user picks. */
-constexpr int kLevelCount = 5;
+/* The goals are a list the user edits: 1 to 10 levels, and level 0 in the state means "no
+ * goal, free play". */
+constexpr int kMaxLevels = 10;
 
 /* A level is a *band*, not a floor: it only counts while the depth is between the level's
  * depth and its upper limit. Going past the top of a level is then not a way to complete it,
@@ -119,11 +120,18 @@ struct LevelBand
     float high = 0.0f;
 };
 
-inline LevelBand bandForLevel(int level, const float lows[kLevelCount], const float highs[kLevelCount],
-                              float minWidthMm = 0.0f)
+/* How many levels are actually in use. Anything outside 1..kMaxLevels is clamped, so a
+ * client cannot ask for zero levels or for more than there is storage for. */
+inline int levelCountInUse(int requested)
+{
+    return (requested < 1) ? 1 : ((requested > kMaxLevels) ? kMaxLevels : requested);
+}
+
+inline LevelBand bandForLevel(int level, const float lows[kMaxLevels], const float highs[kMaxLevels],
+                              int count, float minWidthMm)
 {
     LevelBand band;
-    if (level < 1 || level > kLevelCount)
+    if (level < 1 || level > levelCountInUse(count))
     {
         return band;
     }
@@ -142,10 +150,11 @@ inline LevelBand bandForLevel(int level, const float lows[kLevelCount], const fl
 /* Which level the depth is at now: the deepest level it has reached. 0 means shallower than
  * every level. The upper limits do not enter into it - the level is where the depth is, and
  * the band decides whether a hold counts. */
-inline int levelForDepth(float depthMm, const float lows[kLevelCount])
+inline int levelForDepth(float depthMm, const float lows[kMaxLevels], int count)
 {
     int level = 0;
-    for (int i = 0; i < kLevelCount; i++)
+    const int inUse = levelCountInUse(count);
+    for (int i = 0; i < inUse; i++)
     {
         if (lows[i] > 0.0f && depthMm >= lows[i])
         {
@@ -174,6 +183,25 @@ inline float bandProgress(float depthMm, const LevelBand &band)
     return clampf((depthMm - band.low) / span, 0.0f, 1.0f);
 }
 
+/* The next level in the direction the user picked. Counting down starts at the last level
+ * and walks back to the first, which is a different game from climbing. Returns 0 when the
+ * walk is finished, and the caller ends the run. */
+inline int nextLevel(int level, int count, bool countDown)
+{
+    const int inUse = levelCountInUse(count);
+    if (countDown)
+    {
+        return (level > 1) ? (level - 1) : 0;
+    }
+    return (level < inUse) ? (level + 1) : 0;
+}
+
+/* Where a run starts: the first level, or the last one when counting down. */
+inline int firstLevel(int count, bool countDown)
+{
+    return countDown ? levelCountInUse(count) : 1;
+}
+
 inline const char *levelName(int level)
 {
     switch (level)
@@ -188,15 +216,25 @@ inline const char *levelName(int level)
         return "Level 4";
     case 5:
         return "Level 5";
+    case 6:
+        return "Level 6";
+    case 7:
+        return "Level 7";
+    case 8:
+        return "Level 8";
+    case 9:
+        return "Level 9";
+    case 10:
+        return "Level 10";
     default:
         return "Warm up";
     }
 }
 
 /* The user picks the goal as a level number; 0 means "no goal, free play". */
-inline float goalForLevel(int level, const float lows[kLevelCount])
+inline float goalForLevel(int level, const float lows[kMaxLevels], int count)
 {
-    if (level < 1 || level > kLevelCount)
+    if (level < 1 || level > levelCountInUse(count))
     {
         return 0.0f;
     }

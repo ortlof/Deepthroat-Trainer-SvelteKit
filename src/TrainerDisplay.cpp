@@ -383,15 +383,17 @@ void TrainerDisplay::drawLevelLine(const TrainerScreen &screen)
     char buffer[40];
     if (screen.repMode)
     {
-        /* Rep mode: the count takes the line, because the count is the game. The
-         * level name is still shown by the empty case below when no goal is picked. */
+        /* Rep mode: the count takes the line, because the count is the game. The level goes
+         * on the line as well, or a climb through the levels after each set would be
+         * invisible on the panel. */
         if (screen.repTarget > 0)
         {
-            snprintf(buffer, sizeof(buffer), "REP %u / %u", (unsigned)screen.repCount, (unsigned)screen.repTarget);
+            snprintf(buffer, sizeof(buffer), "REP %u/%u  L%d", (unsigned)screen.repCount,
+                     (unsigned)screen.repTarget, screen.goalLevel);
         }
         else
         {
-            snprintf(buffer, sizeof(buffer), "REP %u", (unsigned)screen.repCount);
+            snprintf(buffer, sizeof(buffer), "REP %u  L%d", (unsigned)screen.repCount, screen.goalLevel);
         }
     }
     else if (screen.goalLevel <= 0)

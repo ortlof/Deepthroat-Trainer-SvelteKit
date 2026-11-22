@@ -21,6 +21,7 @@
 	import PlugConnected from '~icons/tabler/plug-connected';
 	import Engine from '~icons/tabler/target-arrow';
 	import Ruler from '~icons/tabler/ruler-measure';
+	import Ladder from '~icons/tabler/list-numbers';
 	import { page } from '$app/state';
 	import { user } from '$lib/stores/user';
 
@@ -52,6 +53,12 @@
 			title: 'Trainer',
 			icon: Engine,
 			href: '/trainer',
+			feature: true
+		},
+		{
+			title: 'Game',
+			icon: Ladder,
+			href: '/game',
 			feature: true
 		},
 		{

@@ -78,30 +78,40 @@ int main()
 
     /* ---- levels ---------------------------------------------------------- */
     {
-        const float lows[kLevelCount] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f};
-        const float highs[kLevelCount] = {60.0f, 80.0f, 100.0f, 120.0f, 140.0f};
+        const float lows[kMaxLevels] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f, 140.0f, 160.0f, 180.0f, 200.0f, 200.0f};
+        const float highs[kMaxLevels] = {60.0f, 80.0f, 100.0f, 120.0f, 140.0f, 160.0f, 180.0f, 200.0f, 220.0f, 220.0f};
 
-        expectInt("below level 1", levelForDepth(10.0f, lows), 0);
-        expectInt("exactly level 1", levelForDepth(40.0f, lows), 1);
-        expectInt("level 2", levelForDepth(65.0f, lows), 2);
-        expectInt("level 3", levelForDepth(85.0f, lows), 3);
-        expectInt("level 4", levelForDepth(105.0f, lows), 4);
-        expectInt("level 5", levelForDepth(195.0f, lows), 5);
+        /* Five levels in use: everything past the fifth must be invisible. */
+        expectInt("below level 1", levelForDepth(10.0f, lows, 5), 0);
+        expectInt("exactly level 1", levelForDepth(40.0f, lows, 5), 1);
+        expectInt("level 2", levelForDepth(65.0f, lows, 5), 2);
+        expectInt("level 3", levelForDepth(85.0f, lows, 5), 3);
+        expectInt("level 4", levelForDepth(105.0f, lows, 5), 4);
+        expectInt("level 5", levelForDepth(195.0f, lows, 5), 5);
+        expectInt("a sixth level is out of use, so the depth stays at 5", levelForDepth(150.0f, lows, 5), 5);
+        expectInt("with ten levels the same depth is level 6", levelForDepth(150.0f, lows, 10), 6);
+        expectInt("with ten levels it goes to 10", levelForDepth(250.0f, lows, 10), 10);
 
-        const float none[kLevelCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        expectInt("no goals configured stays level 0", levelForDepth(120.0f, none), 0);
+        /* The count is clamped, not trusted. */
+        expectInt("zero levels becomes one", levelCountInUse(0), 1);
+        expectInt("eleven levels becomes ten", levelCountInUse(11), kMaxLevels);
+        expectInt("a sane count is left alone", levelCountInUse(7), 7);
+        expectInt("one level is honoured", levelForDepth(200.0f, lows, levelCountInUse(-4)), 1);
+
+        const float none[kMaxLevels] = {0.0f};
+        expectInt("no goals configured stays level 0", levelForDepth(120.0f, none, 10), 0);
 
         expectStr("level 0 name", levelName(0), "Warm up");
         expectStr("level 2 name", levelName(2), "Level 2");
-        expectStr("level 4 name", levelName(4), "Level 4");
-        expectStr("level 5 name", levelName(5), "Level 5");
-        expectNear("goal of level 3", goalForLevel(3, lows), 80.0f);
-        expectNear("goal of level 5", goalForLevel(5, lows), 120.0f);
-        expectNear("goal of free play is 0", goalForLevel(0, lows), 0.0f);
-        expectNear("a level past the last one has no goal", goalForLevel(6, lows), 0.0f);
+        expectStr("level 9 name", levelName(9), "Level 9");
+        expectStr("level 10 name", levelName(10), "Level 10");
+        expectNear("goal of level 3", goalForLevel(3, lows, 5), 80.0f);
+        expectNear("goal of level 5", goalForLevel(5, lows, 5), 120.0f);
+        expectNear("goal of free play is 0", goalForLevel(0, lows, 5), 0.0f);
+        expectNear("a level past the list has no goal", goalForLevel(6, lows, 5), 0.0f);
 
         /* The band is the point of this: level 1 counts from 40 to 60 and no further. */
-        const LevelBand band = bandForLevel(1, lows, highs);
+        const LevelBand band = bandForLevel(1, lows, highs, 5, 10.0f);
         expectNear("the band starts at the level", band.low, 40.0f);
         expectNear("the band ends at the upper limit", band.high, 60.0f);
         expectTrue("just below the level is out", !inBand(39.9f, band));
@@ -118,18 +128,39 @@ int main()
 
         /* A band whose upper limit is below its level would be impossible to complete, so
          * the band builder refuses it and the free-play level has no band at all. */
-        const float sillyHigh[kLevelCount] = {10.0f, 80.0f, 100.0f, 120.0f, 140.0f};
+        const float sillyHigh[kMaxLevels] = {10.0f, 80.0f, 100.0f, 120.0f, 140.0f};
         expectNear("an upper limit under the level is lifted to the level",
-                   bandForLevel(1, lows, sillyHigh).high, 40.0f);
-        expectTrue("free play has no band, so nothing counts", !inBand(50.0f, bandForLevel(0, lows, highs)));
+                   bandForLevel(1, lows, sillyHigh, 5, 0.0f).high, 40.0f);
+        expectTrue("free play has no band, so nothing counts",
+                   !inBand(50.0f, bandForLevel(0, lows, highs, 5, 10.0f)));
+        expectTrue("a level past the list has no band either",
+                   !inBand(50.0f, bandForLevel(6, lows, highs, 5, 10.0f)));
 
         /* A level saved before the upper limits existed has its limit equal to its depth.
          * With a minimum width that becomes a target that can actually be held. */
-        const float flatHigh[kLevelCount] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f};
-        const LevelBand widened = bandForLevel(1, lows, flatHigh, 10.0f);
+        const float flatHigh[kMaxLevels] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f};
+        const LevelBand widened = bandForLevel(1, lows, flatHigh, 5, 10.0f);
         expectNear("a flat band is widened to the minimum", widened.high, 50.0f);
         expectTrue("and a depth in the widened part counts", inBand(45.0f, widened));
         expectTrue("while a depth past it still does not", !inBand(55.0f, widened));
+
+        /* The walk through the levels, both ways. */
+        expectInt("climbing from 1 is 2", nextLevel(1, 5, false), 2);
+        expectInt("climbing from the last level ends the run", nextLevel(5, 5, false), 0);
+        expectInt("with ten levels climbing goes to 10", nextLevel(9, 10, false), 10);
+        expectInt("counting down from 3 is 2", nextLevel(3, 5, true), 2);
+        expectInt("counting down from 1 ends the run", nextLevel(1, 5, true), 0);
+        expectInt("a run starts at the first level", firstLevel(5, false), 1);
+        expectInt("or at the last one when counting down", firstLevel(5, true), 5);
+        expectInt("with seven levels, counting down starts at 7", firstLevel(7, true), 7);
+
+        /* A whole run, climbed: 1,2,3 then done. */
+        int walked = firstLevel(3, false), steps = 0;
+        while (walked > 0 && steps < 20) { walked = nextLevel(walked, 3, false); steps++; }
+        expectInt("climbing three levels takes three steps", steps, 3);
+        int down = firstLevel(4, true), downSteps = 0;
+        while (down > 0 && downSteps < 20) { down = nextLevel(down, 4, true); downSteps++; }
+        expectInt("counting down four levels takes four steps", downSteps, 4);
     }
 
     /* ---- filter ---------------------------------------------------------- */

@@ -157,22 +157,26 @@ void displayTask(void *pvParameters);
 
 /* -------------------------------------------------------------- helpers ---- */
 
-/* The goals as the pure maths wants them: the settings keep them as named fields and the
- * trainer needs arrays of five. */
-static void levelBands(float lows[trainer::kLevelCount], float highs[trainer::kLevelCount])
+/* The goals as the pure maths wants them: the settings keep them as arrays, and the count
+ * says how many of the ten are in use. */
+static void levelBands(float lows[trainer::kMaxLevels], float highs[trainer::kMaxLevels])
 {
-    cfg().levelLows(lows);
-    cfg().levelHighs(highs);
+    cfg().levels(lows, highs);
+}
+
+static int levelCount()
+{
+    return trainer::levelCountInUse(cfg().level_count);
 }
 
 /* The band of the level the user picked. Level 0 (free play) gives an empty band, which is
  * never in range, so free play counts nothing. */
 static trainer::LevelBand currentBand()
 {
-    float lows[trainer::kLevelCount];
-    float highs[trainer::kLevelCount];
+    float lows[trainer::kMaxLevels];
+    float highs[trainer::kMaxLevels];
     levelBands(lows, highs);
-    return trainer::bandForLevel(lastGoalLevel, lows, highs, TRAINER_MIN_BAND_MM);
+    return trainer::bandForLevel(lastGoalLevel, lows, highs, levelCount(), TRAINER_MIN_BAND_MM);
 }
 
 static float currentGoalMm()
@@ -769,10 +773,10 @@ static void buildSnapshot()
     screen.maxDepthMm = cfg().max_depth_mm;
     screen.gauge = trainer::gaugeFraction(depthMm, cfg().max_depth_mm);
     screen.peakGauge = trainer::gaugeFraction(peakMm, cfg().max_depth_mm);
-    float lows[trainer::kLevelCount];
-    float highs[trainer::kLevelCount];
+    float lows[trainer::kMaxLevels];
+    float highs[trainer::kMaxLevels];
     levelBands(lows, highs);
-    screen.level = trainer::levelForDepth(depthMm, lows);
+    screen.level = trainer::levelForDepth(depthMm, lows, levelCount());
     screen.goalLevel = lastGoalLevel;
     screen.goalMm = currentGoalMm();
     screen.goalLimitMm = currentGoalLimitMm();
@@ -876,10 +880,10 @@ static void publishState()
         if (fabsf(state.peakMm - peakMm) >= 0.5f) { state.peakMm = peakMm; changed = true; }
         const float gauge = trainer::gaugeFraction(depthMm, cfg().max_depth_mm);
         if (fabsf(state.gauge - gauge) >= 0.005f) { state.gauge = gauge; changed = true; }
-        float goalLows[trainer::kLevelCount];
-        float goalHighs[trainer::kLevelCount];
+        float goalLows[trainer::kMaxLevels];
+        float goalHighs[trainer::kMaxLevels];
         levelBands(goalLows, goalHighs);
-        const int level = trainer::levelForDepth(depthMm, goalLows);
+        const int level = trainer::levelForDepth(depthMm, goalLows, levelCount());
         if (state.level != level) { state.level = level; changed = true; }
         const char *levelName = trainer::levelName(level);
         if (strcmp(state.levelName, levelName) != 0) { snprintf(state.levelName, sizeof(state.levelName), "%s", levelName); changed = true; }
@@ -1005,12 +1009,15 @@ void trainerTask(void *pvParameters)
         }
 
         /* Reps need something to hold. With free play selected there is no goal, so a
-         * set would count nothing forever: rep mode holds level 1 instead and says so. */
+         * set would count nothing forever: rep mode takes the first level of the walk
+         * instead, which is the last level when the levels count down. */
         if (playModeReps() && lastGoalLevel == 0)
         {
-            lastGoalLevel = 1;
+            lastGoalLevel = trainer::firstLevel(levelCount(), cfg().level_count_down);
+            repCounter.reset(cfg().reps_target);
             holdTracker.reset(cfg().hold_seconds);
-            setNotice("reps: holding level 1");
+            holdCounted = false;
+            setNotice("reps: taking the first level");
         }
 
         /* The radio: the PHY settings need a started WiFi driver, and the framework
@@ -1117,13 +1124,33 @@ void trainerTask(void *pvParameters)
                             if (repCounter.targetReached)
                             {
                                 const uint16_t done = repCounter.count;
-                                snprintf(buffer, sizeof(buffer), "set done - %u reps", (unsigned)done);
-                                setNotice(buffer);
-                                esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
-                                stopSession();
-                                /* The praise takes the panel after the session has been
-                                 * closed, so the count is read before that. */
-                                startPanelEffect(2, done, cfg().praise);
+                                /* With climbing on, the set is followed by the next level
+                                 * and another set; the run ends on the last level, with the
+                                 * praise. Without climbing, every set is the whole thing. */
+                                const int next = cfg().auto_advance
+                                                     ? trainer::nextLevel(lastGoalLevel, levelCount(), cfg().level_count_down)
+                                                     : 0;
+                                if (next > 0)
+                                {
+                                    lastGoalLevel = next;
+                                    repCounter.reset(cfg().reps_target);
+                                    holdTracker.reset(cfg().hold_seconds);
+                                    holdCounted = false;
+                                    snprintf(buffer, sizeof(buffer), "set done - %u reps, next %s",
+                                             (unsigned)done, trainer::levelName(next));
+                                    setNotice(buffer);
+                                    esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
+                                }
+                                else
+                                {
+                                    snprintf(buffer, sizeof(buffer), "set done - %u reps", (unsigned)done);
+                                    setNotice(buffer);
+                                    esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
+                                    stopSession();
+                                    /* The praise takes the panel after the session has been
+                                     * closed, so the count is read before that. */
+                                    startPanelEffect(2, done, cfg().praise);
+                                }
                             }
                         }
                         holdCounted = false;
@@ -1136,13 +1163,19 @@ void trainerTask(void *pvParameters)
                         setNotice(buffer);
                         esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
 
-                        if (cfg().auto_advance && lastGoalLevel < trainer::kLevelCount)
+                        if (cfg().auto_advance)
                         {
-                            lastGoalLevel++;
-                            holdTracker.reset(cfg().hold_seconds);
-                            holdCounted = false;
+                            /* Climb, or step down, after every completed hold. When the
+                             * walk is finished the last level stays. */
+                            const int next = trainer::nextLevel(lastGoalLevel, levelCount(), cfg().level_count_down);
+                            if (next > 0)
+                            {
+                                lastGoalLevel = next;
+                                holdTracker.reset(cfg().hold_seconds);
+                                holdCounted = false;
+                            }
                         }
-                        else if (!cfg().auto_advance)
+                        else
                         {
                             holdCounted = false;
                         }

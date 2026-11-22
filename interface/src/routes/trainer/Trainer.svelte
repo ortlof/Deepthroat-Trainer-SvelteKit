@@ -81,17 +81,10 @@
 		max_depth_mm: number;
 		calibration_mm: number;
 		level1_mm: number;
-		level2_mm: number;
-		level3_mm: number;
-		level4_mm: number;
-		level5_mm: number;
-		level1_max_mm: number;
-		level2_max_mm: number;
-		level3_max_mm: number;
-		level4_max_mm: number;
-		level5_max_mm: number;
+		level_count: number;
 		hold_seconds: number;
 		auto_advance: boolean;
+		level_count_down: boolean;
 		play_mode: number;
 		reps_target: number;
 		filter_tau_s: number;
@@ -100,6 +93,7 @@
 		display_brightness: number;
 		dim_brightness: number;
 		display_timeout_s: number;
+		[key: string]: number | boolean | string;
 	}
 
 	let state: TrainerState = $state({
@@ -164,17 +158,10 @@
 		max_depth_mm: 120,
 		calibration_mm: 0,
 		level1_mm: 40,
-		level2_mm: 60,
-		level3_mm: 80,
-		level4_mm: 100,
-		level5_mm: 120,
-		level1_max_mm: 60,
-		level2_max_mm: 80,
-		level3_max_mm: 100,
-		level4_max_mm: 120,
-		level5_max_mm: 140,
+		level_count: 5,
 		hold_seconds: 3,
 		auto_advance: false,
+		level_count_down: false,
 		play_mode: 0,
 		reps_target: 0,
 		filter_tau_s: 0.2,
@@ -186,6 +173,18 @@
 	});
 
 	const UNIT_NAMES = ['mm', 'cm', 'in'];
+
+	/* The level list lives in the Game page; here it is only used to offer the goals that
+	 * exist. The array index signature on the settings type is what allows level3_mm and the
+	 * rest to be read without naming all ten. */
+	function levelNumbers(): number[] {
+		const count = Math.max(1, Math.min(10, Number(settings.level_count) || 1));
+		return Array.from({ length: count }, (_, i) => i + 1);
+	}
+
+	function levelValue(level: number, which: 'mm' | 'max_mm'): number {
+		return Number(settings[`level${level}_${which}`] ?? 0);
+	}
 
 	/* The ring: 270 degrees of a circle, drawn with a dash pattern. */
 	const RING_RADIUS = 90;
@@ -464,21 +463,11 @@
 						onchange={(event) => command({ goal_level: Number(event.currentTarget.value) })}
 					>
 						<option value={0}>Free play</option>
-						<option value={1}>
-							Level 1 ({settings.level1_mm.toFixed(0)}-{settings.level1_max_mm.toFixed(0)} mm)
-						</option>
-						<option value={2}>
-							Level 2 ({settings.level2_mm.toFixed(0)}-{settings.level2_max_mm.toFixed(0)} mm)
-						</option>
-						<option value={3}>
-							Level 3 ({settings.level3_mm.toFixed(0)}-{settings.level3_max_mm.toFixed(0)} mm)
-						</option>
-						<option value={4}>
-							Level 4 ({settings.level4_mm.toFixed(0)}-{settings.level4_max_mm.toFixed(0)} mm)
-						</option>
-						<option value={5}>
-							Level 5 ({settings.level5_mm.toFixed(0)}-{settings.level5_max_mm.toFixed(0)} mm)
-						</option>
+						{#each levelNumbers() as level (level)}
+							<option value={level}>
+								Level {level} ({levelValue(level, 'mm').toFixed(0)}-{levelValue(level, 'max_mm').toFixed(0)} mm)
+							</option>
+						{/each}
 					</select>
 				</div>
 				<div class="grow">

@@ -49,19 +49,16 @@ public:
     /* --- goals ---
      * Every level is a band: it counts from its depth up to its own upper limit. Going past
      * the top of a level does not count as that level, so the upper limit is what makes the
-     * goal a target rather than "deeper is better". */
-    float level1_mm = 40.0f;
-    float level2_mm = 60.0f;
-    float level3_mm = 80.0f;
-    float level4_mm = 100.0f;
-    float level5_mm = 120.0f;
-    float level1_max_mm = 60.0f;
-    float level2_max_mm = 80.0f;
-    float level3_max_mm = 100.0f;
-    float level4_max_mm = 120.0f;
-    float level5_max_mm = 140.0f;
-    float hold_seconds = 3.0f;     /* how long a goal must be held */
-    bool auto_advance = false;     /* move to the next level after each hold */
+     * goal a target rather than "deeper is better". The list is edited in the web interface
+     * and may be 1 to 10 levels long, which is why it is an array and not named fields. */
+    uint8_t level_count = 5;
+    float level_mm[trainer::kMaxLevels] = {40.0f, 60.0f, 80.0f, 100.0f, 120.0f,
+                                           140.0f, 160.0f, 180.0f, 200.0f, 200.0f};
+    float level_max_mm[trainer::kMaxLevels] = {60.0f, 80.0f, 100.0f, 120.0f, 140.0f,
+                                               160.0f, 180.0f, 200.0f, 220.0f, 220.0f};
+    float hold_seconds = 3.0f;      /* how long a goal must be held */
+    bool auto_advance = false;      /* move to the next level after a set or a hold */
+    bool level_count_down = false;  /* walk the levels from the last one down to the first */
 
     /* --- play --- */
     uint8_t play_mode = 0;         /* 0 = hold the goal, 1 = count reps */
@@ -85,37 +82,14 @@ public:
     int16_t panel_centre_x = 225;
     int16_t panel_centre_y = 231;
 
-    /* The goals as the pure maths wants them: five depths and five upper limits. */
-    void levelLows(float out[trainer::kLevelCount]) const
+    /* The goals as the pure maths wants them: one array of depths and one of upper limits. */
+    void levels(float lows[trainer::kMaxLevels], float highs[trainer::kMaxLevels]) const
     {
-        out[0] = level1_mm;
-        out[1] = level2_mm;
-        out[2] = level3_mm;
-        out[3] = level4_mm;
-        out[4] = level5_mm;
-    }
-
-    void levelHighs(float out[trainer::kLevelCount]) const
-    {
-        out[0] = level1_max_mm;
-        out[1] = level2_max_mm;
-        out[2] = level3_max_mm;
-        out[3] = level4_max_mm;
-        out[4] = level5_max_mm;
-    }
-
-    void setLevels(const float lows[trainer::kLevelCount], const float highs[trainer::kLevelCount])
-    {
-        level1_mm = lows[0];
-        level2_mm = lows[1];
-        level3_mm = lows[2];
-        level4_mm = lows[3];
-        level5_mm = lows[4];
-        level1_max_mm = highs[0];
-        level2_max_mm = highs[1];
-        level3_max_mm = highs[2];
-        level4_max_mm = highs[3];
-        level5_max_mm = highs[4];
+        for (int i = 0; i < trainer::kMaxLevels; i++)
+        {
+            lows[i] = level_mm[i];
+            highs[i] = level_max_mm[i];
+        }
     }
 
     static void read(TrainerSettings &settings, JsonObject &root)
@@ -123,18 +97,18 @@ public:
         root["reference_mm"] = settings.reference_mm;
         root["max_depth_mm"] = settings.max_depth_mm;
         root["calibration_mm"] = settings.calibration_mm;
-        root["level1_mm"] = settings.level1_mm;
-        root["level2_mm"] = settings.level2_mm;
-        root["level3_mm"] = settings.level3_mm;
-        root["level4_mm"] = settings.level4_mm;
-        root["level5_mm"] = settings.level5_mm;
-        root["level1_max_mm"] = settings.level1_max_mm;
-        root["level2_max_mm"] = settings.level2_max_mm;
-        root["level3_max_mm"] = settings.level3_max_mm;
-        root["level4_max_mm"] = settings.level4_max_mm;
-        root["level5_max_mm"] = settings.level5_max_mm;
+        root["level_count"] = settings.level_count;
+        char levelKey[24];
+        for (int i = 0; i < trainer::kMaxLevels; i++)
+        {
+            snprintf(levelKey, sizeof(levelKey), "level%d_mm", i + 1);
+            root[levelKey] = settings.level_mm[i];
+            snprintf(levelKey, sizeof(levelKey), "level%d_max_mm", i + 1);
+            root[levelKey] = settings.level_max_mm[i];
+        }
         root["hold_seconds"] = settings.hold_seconds;
         root["auto_advance"] = settings.auto_advance;
+        root["level_count_down"] = settings.level_count_down;
         root["play_mode"] = settings.play_mode;
         root["reps_target"] = settings.reps_target;
         root["praise"] = settings.praise;
@@ -165,14 +139,15 @@ public:
          * "level 2" could be shallower than "level 1" and the level display would jump
          * backwards. An upper limit is never below its own level, so a band can never be
          * inside out: the limit below the level would otherwise make the goal impossible. */
-        float currentLows[trainer::kLevelCount];
-        float currentHighs[trainer::kLevelCount];
-        settings.levelLows(currentLows);
-        settings.levelHighs(currentHighs);
+        float currentLows[trainer::kMaxLevels];
+        float currentHighs[trainer::kMaxLevels];
+        settings.levels(currentLows, currentHighs);
 
-        float lows[trainer::kLevelCount];
-        float highs[trainer::kLevelCount];
-        for (int i = 0; i < trainer::kLevelCount; i++)
+        const int count = trainer::levelCountInUse((int)(root["level_count"] | (int)settings.level_count));
+
+        float lows[trainer::kMaxLevels];
+        float highs[trainer::kMaxLevels];
+        for (int i = 0; i < trainer::kMaxLevels; i++)
         {
             char key[24];
             snprintf(key, sizeof(key), "level%d_mm", i + 1);
@@ -187,7 +162,7 @@ public:
         }
 
         bool goalsSame = true;
-        for (int i = 0; i < trainer::kLevelCount; i++)
+        for (int i = 0; i < trainer::kMaxLevels; i++)
         {
             if (lows[i] != currentLows[i] || highs[i] != currentHighs[i])
             {
@@ -199,6 +174,7 @@ public:
         hold = constrain(hold, 0.5f, 60.0f);
 
         bool autoAdvance = root["auto_advance"] | settings.auto_advance;
+        bool countDown = root["level_count_down"] | settings.level_count_down;
 
         int playMode = root["play_mode"] | (int)settings.play_mode;
         playMode = constrain(playMode, 0, 1);
@@ -245,6 +221,7 @@ public:
 
         if (reference == settings.reference_mm && maxDepth == settings.max_depth_mm &&
             calibration == settings.calibration_mm && goalsSame &&
+            count == (int)settings.level_count && countDown == settings.level_count_down &&
             hold == settings.hold_seconds && autoAdvance == settings.auto_advance &&
             playMode == (int)settings.play_mode && repsTarget == (int)settings.reps_target &&
             tau == settings.filter_tau_s && stop == settings.session_stop_s &&
@@ -259,7 +236,13 @@ public:
         settings.reference_mm = reference;
         settings.max_depth_mm = maxDepth;
         settings.calibration_mm = calibration;
-        settings.setLevels(lows, highs);
+        settings.level_count = (uint8_t)count;
+        for (int i = 0; i < trainer::kMaxLevels; i++)
+        {
+            settings.level_mm[i] = lows[i];
+            settings.level_max_mm[i] = highs[i];
+        }
+        settings.level_count_down = countDown;
         settings.hold_seconds = hold;
         settings.auto_advance = autoAdvance;
         settings.play_mode = (uint8_t)playMode;

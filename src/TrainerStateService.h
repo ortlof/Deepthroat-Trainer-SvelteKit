@@ -222,7 +222,7 @@ public:
         const bool zero = root["zero"] | state.zero;
         const bool resetPeak = root["reset_peak"] | state.resetPeak;
         int goalLevel = root["goal_level"] | state.goalLevel;
-        goalLevel = constrain(goalLevel, 0, 5);
+        goalLevel = constrain(goalLevel, 0, 10); /* 0 = free play, 1..10 = the level list */
         const bool displayOn = root["display_on"] | state.displayOn;
 
         /* A panel effect is always taken as a change, so the same animation can be
