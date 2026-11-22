@@ -61,6 +61,13 @@ public:
     uint8_t dim_brightness = 10;     /* percent while idle */
     uint16_t display_timeout_s = 0;  /* 0 = never dim */
 
+    /* Where the visible round window sits inside the 480x480 framebuffer. Measured from a
+     * video of this board: the window is about 15 px left and 9 px above the middle of the
+     * framebuffer, which is easy to see on a ring this close to the edge. Nudge it until
+     * the ring looks centred. */
+    int16_t panel_centre_x = 225;
+    int16_t panel_centre_y = 231;
+
     static void read(TrainerSettings &settings, JsonObject &root)
     {
         root["reference_mm"] = settings.reference_mm;
@@ -80,6 +87,8 @@ public:
         root["display_brightness"] = settings.display_brightness;
         root["dim_brightness"] = settings.dim_brightness;
         root["display_timeout_s"] = settings.display_timeout_s;
+        root["panel_centre_x"] = settings.panel_centre_x;
+        root["panel_centre_y"] = settings.panel_centre_y;
     }
 
     static StateUpdateResult update(JsonObject &root, TrainerSettings &settings, const String &originId)
@@ -147,6 +156,13 @@ public:
         int timeout = root["display_timeout_s"] | (int)settings.display_timeout_s;
         timeout = constrain(timeout, 0, 3600);
 
+        /* The panel centre is a nudge, not a coordinate: the whole panel is 480 wide, so an
+         * offset of more than a few tens of pixels means something else is wrong. */
+        int centreX = root["panel_centre_x"] | (int)settings.panel_centre_x;
+        centreX = constrain(centreX, 200, 280);
+        int centreY = root["panel_centre_y"] | (int)settings.panel_centre_y;
+        centreY = constrain(centreY, 200, 280);
+
         if (reference == settings.reference_mm && maxDepth == settings.max_depth_mm &&
             calibration == settings.calibration_mm && level1 == settings.level1_mm &&
             level2 == settings.level2_mm && level3 == settings.level3_mm &&
@@ -155,6 +171,7 @@ public:
             tau == settings.filter_tau_s && stop == settings.session_stop_s &&
             units == (int)settings.units && brightness == (int)settings.display_brightness &&
             dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s &&
+            centreX == (int)settings.panel_centre_x && centreY == (int)settings.panel_centre_y &&
             strcmp(praise, settings.praise) == 0)
         {
             return StateUpdateResult::UNCHANGED;
@@ -176,6 +193,8 @@ public:
         settings.display_brightness = (uint8_t)brightness;
         settings.dim_brightness = (uint8_t)dim;
         settings.display_timeout_s = (uint16_t)timeout;
+        settings.panel_centre_x = (int16_t)centreX;
+        settings.panel_centre_y = (int16_t)centreY;
         snprintf(settings.praise, sizeof(settings.praise), "%s", praise);
         return StateUpdateResult::CHANGED;
     }

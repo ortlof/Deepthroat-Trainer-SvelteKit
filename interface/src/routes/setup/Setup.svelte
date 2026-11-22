@@ -26,6 +26,8 @@
 		display_brightness: number;
 		dim_brightness: number;
 		display_timeout_s: number;
+		panel_centre_x: number;
+		panel_centre_y: number;
 	}
 
 	interface TrainerState {
@@ -55,7 +57,9 @@
 		units: 0,
 		display_brightness: 70,
 		dim_brightness: 10,
-		display_timeout_s: 0
+		display_timeout_s: 0,
+		panel_centre_x: 225,
+		panel_centre_y: 231
 	});
 
 	let state: TrainerState = $state({
@@ -235,6 +239,43 @@
 				<option value={2}>inches</option>
 			</select>
 			<div class="label">The panel and the live readout follow this.</div>
+		</div>
+
+		<div class="fieldset">
+			<label class="label" for="centrex">Panel centre X ({settings.panel_centre_x})</label>
+			<input
+				id="centrex"
+				type="range"
+				class="range range-secondary"
+				min="200"
+				max="280"
+				step="1"
+				bind:value={settings.panel_centre_x}
+				onchange={() => saveSettings({ panel_centre_x: settings.panel_centre_x })}
+			/>
+			<div class="label">
+				The round window is glued on by hand and is not always centred on the 480 wide panel, so
+				the whole layout is moved. The default came from measuring this board's window: about 15
+				px left of the middle.
+			</div>
+		</div>
+
+		<div class="fieldset">
+			<label class="label" for="centrey">Panel centre Y ({settings.panel_centre_y})</label>
+			<input
+				id="centrey"
+				type="range"
+				class="range range-secondary"
+				min="200"
+				max="280"
+				step="1"
+				bind:value={settings.panel_centre_y}
+				onchange={() => saveSettings({ panel_centre_y: settings.panel_centre_y })}
+			/>
+			<div class="label">
+				About 9 px above the middle on this board. Nudge either value until the ring looks centred
+				in the round window; the panel moves as you let the slider go.
+			</div>
 		</div>
 	</div>
 </SettingsCard>

@@ -212,26 +212,46 @@ int main()
         expectNear("progress is full at the end", fxProgress(3000, 1000, 2000), 1.0f, 0.001f);
         expectNear("progress is clamped past the end", fxProgress(90000, 1000, 2000), 1.0f, 0.001f);
 
-        /* The burst: the first ring leaves the middle at once, the later ones wait their
-         * turn, and no ring ever shrinks - that is what makes it read as a burst. */
-        expectNear("ring 0 starts at the middle", (float)fxRingRadius(0, 0.0f, 200), 0.0f, 0.5f);
-        expectNear("ring 0 reaches the rim", (float)fxRingRadius(0, 0.6f, 200), 200.0f, 0.5f);
-        expectNear("ring 1 waits its turn", (float)fxRingRadius(1, 0.0f, 200), 0.0f, 0.5f);
-        expectTrue("ring 2 is still inside when ring 0 is out",
-                   fxRingRadius(2, 0.6f, 200) < fxRingRadius(0, 0.6f, 200));
-        expectNear("ring 2 reaches the rim by the end", (float)fxRingRadius(2, 1.0f, 200), 200.0f, 0.5f);
-        expectNear("ring 3 is the rim at the end too", (float)fxRingRadius(3, 1.0f, 200), 200.0f, 0.5f);
-        for (float p = 0.0f; p <= 1.0f; p += 0.05f)
+        /* The celebration arc: it must never leave the ring band, and the piece that wraps
+         * round has to be the right length. */
         {
-            bool monotonic = true;
-            for (uint8_t ring = 0; ring < 4; ring++)
+            const float ringStart = 135.0f, ringEnd = 405.0f;
+            float a1, a2, b1, b2;
+
+            fxSweepSegments(0.0f, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
+            expectNear("the arc starts at the ring start", a1, 135.0f, 0.001f);
+            expectNear("the arc is as long as asked", a2 - a1, 74.0f, 0.001f);
+            expectTrue("no wrap yet", b1 == b2);
+
+            fxSweepSegments(200.0f, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
+            expectNear("a late arc starts 200 degrees in", a1, 335.0f, 0.001f);
+            expectNear("and runs to the end of the ring", a2, 405.0f, 0.001f);
+            expectNear("the wrapped piece starts at the ring start", b1, 135.0f, 0.001f);
+            expectNear("with the remaining 4 degrees", b2 - b1, 4.0f, 0.001f);
+
+            /* Whatever the offset, the two pieces together are exactly one arc, and they
+             * stay inside the ring. This is the invariant that keeps a stray segment off
+             * the panel. */
+            bool lengthHeld = true, insideHeld = true;
+            for (float off = 0.0f; off < 1080.0f; off += 7.0f)
             {
-                if (fxRingRadius(ring, p + 0.05f, 200) < fxRingRadius(ring, p, 200))
+                fxSweepSegments(off, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
+                const float total = (a2 - a1) + (b2 - b1);
+                if (total < 73.9f || total > 74.1f)
                 {
-                    monotonic = false;
+                    lengthHeld = false;
+                }
+                if (a1 < ringStart - 0.01f || a2 > ringEnd + 0.01f ||
+                    b1 < ringStart - 0.01f || b2 > ringEnd + 0.01f)
+                {
+                    insideHeld = false;
                 }
             }
-            expectTrue("a ring never shrinks", monotonic);
+            expectTrue("the arc never changes length, wrap or not", lengthHeld);
+            expectTrue("the arc never leaves the ring", insideHeld);
+
+            fxSweepSegments(1000.0f, 74.0f, ringStart, ringEnd, a1, a2, b1, b2);
+            expectTrue("a big offset wraps round and keeps going", a1 >= ringStart && a2 <= ringEnd);
         }
 
         expectTrue("the pulse is off in the first period", !fxPulseOn(100, 480));

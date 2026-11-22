@@ -91,6 +91,11 @@ public:
      * or a session reset, when the whole layout shifts. */
     void invalidate() { _valid = false; }
 
+    /* Where the centre of the visible round window sits inside the 480x480 framebuffer.
+     * It is not always (240, 240): the window is glued on by hand, and a window 15 px off
+     * is obvious on a ring this close to the edge. A change repaints the whole panel. */
+    static void setCentre(int16_t x, int16_t y);
+
     /* The XL9535 expander bus, so the touch driver can reset its controller
      * through the same object instead of building a second one. */
     Arduino_XL9535SWSPI *bus() const { return _bus; }
@@ -148,4 +153,14 @@ private:
     bool _lastSessionActive = false;
     int8_t _batteryBucket = -2; /* -2 = nothing drawn, -1 = battery unknown */
     bool _fxDrawn = false;      /* an animation took the panel: it has to be repainted */
+
+    /* The animation is drawn incrementally, like everything else on this panel: it clears
+     * once at its start, and afterwards only the arc band and the words are written. A
+     * full clear per frame makes the panel flash, because the framebuffer is scanned out
+     * while it is written. */
+    bool _fxCleared = false;
+    float _fxSweepFromA = -1.0f, _fxSweepToA = -1.0f; /* where the arc was last drawn */
+    float _fxSweepFromB = -1.0f, _fxSweepToB = -1.0f; /* its wrapped piece, if it had one */
+    char _fxTextDrawn[48] = "";
+    int8_t _fxPulse = -1;
 };

@@ -11,8 +11,16 @@
 
 /* ------------------------------------------------------------------ layout -- */
 
-#define CX 240
-#define CY 240
+/* The centre of the visible round window inside the framebuffer. It is a variable and not a
+ * constant, because the window is not always glued on straight: see setCentre(). Every
+ * drawing call in this file goes through CX and CY, so one pair of values moves the whole
+ * layout. */
+static int16_t g_centreX = 240;
+static int16_t g_centreY = 240;
+static bool g_centreChanged = false;
+
+#define CX g_centreX
+#define CY g_centreY
 #define R_OUT 212
 #define R_IN 184
 
@@ -38,6 +46,12 @@
 #define HOLD_BAR_H 15
 #define FOOTER_CY 392
 #define HEADER_CY 100
+
+/* The box the animation's words are drawn in. Its corners stay inside the ring band
+ * (sqrt(150^2 + 100^2) = 180, and the band starts at 184), so clearing it can never rub out
+ * the travelling arc. */
+#define FX_TEXT_HALF_W 150
+#define FX_TEXT_HALF_H 100
 
 /* Battery symbol: top left, inside the ring, clear of the peak readout in the middle. */
 #define BATTERY_X 134
@@ -492,62 +506,112 @@ void TrainerDisplay::drawFooter(const TrainerScreen &screen)
                  screen.sensorOk ? COL_DIM : COL_WARN);
 }
 
-/* The big animations. They take the whole panel, because the point of them is that
- * they are impossible to miss: a rep that just counted with the way back out, and the
- * praise when the set is finished. The trainer task starts them; the timing comes from
- * trainer_math.h, so the host tests cover when they start and when they end. */
+/* ------------------------------------------------------------ panel centre ---- */
+
+/* Move the whole layout, because the round window is not always centred on the panel. The
+ * next frame repaints everything, so a nudge in the web interface is visible at once. */
+void TrainerDisplay::setCentre(int16_t x, int16_t y)
+{
+    if (x == g_centreX && y == g_centreY)
+    {
+        return;
+    }
+    g_centreX = x;
+    g_centreY = y;
+    g_centreChanged = true;
+}
+
+/* ---------------------------------------------------------------- effects ---- */
 void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, float progress)
 {
     const bool praise = (screen.fx == 2);
     const uint16_t accent = praise ? COL_DONE : COL_ACCENT;
 
-    _gfx->fillScreen(COL_BG);
-
-    /* The burst: rings leaving the middle one after another. */
-    for (uint8_t i = 0; i < TRAINER_FX_RINGS; i++)
+    /* Once, when the animation starts: clear the panel and lay down the ring the arc runs
+     * on. Nothing clears the whole screen again after this, because this panel scans its
+     * framebuffer out while it is written and a full clear every frame is what made the
+     * whole panel flash. */
+    if (!_fxCleared)
     {
-        const int16_t radius = trainer::fxRingRadius(i, progress, TRAINER_FX_BURST_RADIUS);
-        if (radius < 10)
-        {
-            continue;
-        }
-        _gfx->drawCircle(CX, CY, radius, ((i & 1u) == 0u) ? accent : COL_TRACK);
-        _gfx->drawCircle(CX, CY, radius - 1, ((i & 1u) == 0u) ? accent : COL_TRACK);
+        _gfx->fillScreen(COL_BG);
+        _gfx->fillArc(CX, CY, R_OUT, R_IN, GAUGE_START, GAUGE_START + GAUGE_SWEEP - ANGLE_EPSILON, COL_TRACK);
+        _fxSweepFromA = _fxSweepToA = -1.0f;
+        _fxSweepFromB = _fxSweepToB = -1.0f;
+        _fxTextDrawn[0] = '\0';
+        _fxPulse = -1;
+        _fxCleared = true;
     }
 
-    /* The words have to fit across the panel: at twice the size a long praise line
-     * would run over the edge, so the size steps down for anything wide. */
+    /* The travelling arc: rub out where it was, draw where it is now. Each piece is one
+     * arc in the ring band, a few thousand pixels, so this costs nothing like a screen. */
+    float nowFromA, nowToA, nowFromB, nowToB;
+    trainer::fxSweepSegments(progress * GAUGE_SWEEP * TRAINER_FX_TURNS, TRAINER_FX_ARC_DEG,
+                            GAUGE_START, GAUGE_START + GAUGE_SWEEP - ANGLE_EPSILON,
+                            nowFromA, nowToA, nowFromB, nowToB);
+
+    if (_fxSweepToA > _fxSweepFromA)
+    {
+        _gfx->fillArc(CX, CY, R_OUT, R_IN, _fxSweepFromA, _fxSweepToA, COL_TRACK);
+    }
+    if (_fxSweepToB > _fxSweepFromB)
+    {
+        _gfx->fillArc(CX, CY, R_OUT, R_IN, _fxSweepFromB, _fxSweepToB, COL_TRACK);
+    }
+    if (nowToA > nowFromA)
+    {
+        _gfx->fillArc(CX, CY, R_OUT, R_IN, nowFromA, nowToA, accent);
+    }
+    if (nowToB > nowFromB)
+    {
+        _gfx->fillArc(CX, CY, R_OUT, R_IN, nowFromB, nowToB, accent);
+    }
+    _fxSweepFromA = nowFromA;
+    _fxSweepToA = nowToA;
+    _fxSweepFromB = nowFromB;
+    _fxSweepToB = nowToB;
+
+    /* The words. At twice the size a long line would run into the ring band, so the size
+     * steps down for anything wide. */
     char big[24];
+    char line[32];
+    char tail[32];
     if (praise)
     {
-        const char *text = (screen.fxText[0] != '\0') ? screen.fxText : "GOOD";
-        snprintf(big, sizeof(big), "%s", text);
+        snprintf(big, sizeof(big), "%s", (screen.fxText[0] != '\0') ? screen.fxText : "GOOD");
+        snprintf(line, sizeof(line), "%u reps done", (unsigned)screen.fxCount);
+        snprintf(tail, sizeof(tail), "tap to start again");
     }
     else
     {
         snprintf(big, sizeof(big), "REP %u", (unsigned)screen.fxCount);
+        snprintf(line, sizeof(line), "back out fully");
+        snprintf(tail, sizeof(tail), "then go again");
     }
+
+    char block[48];
+    snprintf(block, sizeof(block), "%s|%s", big, line);
+
+    const int8_t pulse = (int8_t)(trainer::fxPulseOn(nowMs, 480) ? 1 : 0);
+    if (strcmp(_fxTextDrawn, block) == 0 && _fxPulse == pulse)
+    {
+        return; /* nothing about the words changed: the band was all that moved */
+    }
+
+    const bool newWords = (strcmp(_fxTextDrawn, block) != 0);
+    _fxTextDrawn[0] = '\0';
+    snprintf(_fxTextDrawn, sizeof(_fxTextDrawn), "%s", block);
+    _fxPulse = pulse;
+
+    /* The words live inside the ring band, and clearing their box cannot reach the arc. */
+    eraseBox(CX, CY + 5, FX_TEXT_HALF_W, FX_TEXT_HALF_H);
+
     const uint8_t scale = (textWidth(&FreeSansBold24pt7b, big, 2) <= TRAINER_FX_TEXT_WIDTH) ? 2 : 1;
-
-    if (praise)
+    const uint16_t bigColor = trainer::fxPulseOn(nowMs, 480) ? accent : COL_TEXT;
+    drawCentered(&FreeSansBold24pt7b, scale, CX, CY - 60, big, bigColor);
+    if (newWords)
     {
-        /* The words the set earned. They pulse, so the panel keeps moving while they
-         * are on it. */
-        const uint16_t color = trainer::fxPulseOn(nowMs, 480) ? accent : COL_TEXT;
-        drawCentered(&FreeSansBold24pt7b, scale, CX, CY - 40, big, color);
-
-        char line[32];
-        snprintf(line, sizeof(line), "%u reps done", (unsigned)screen.fxCount);
-        drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 50, line, COL_TEXT);
-        drawCentered(&FreeSans9pt7b, 1, CX, CY + 90, "tap to start again", COL_DIM);
-    }
-    else
-    {
-        drawCentered(&FreeSansBold24pt7b, scale, CX, CY - 50, big, COL_DONE);
-
-        /* The instruction that matters for the next rep. */
-        drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 30, "back out fully", COL_TEXT);
-        drawCentered(&FreeSans9pt7b, 1, CX, CY + 70, "then go again", COL_DIM);
+        drawCentered(&FreeSansBold12pt7b, 1, CX, CY + 30, line, COL_TEXT);
+        drawCentered(&FreeSans9pt7b, 1, CX, CY + 70, tail, COL_DIM);
     }
 }
 
@@ -556,6 +620,13 @@ void TrainerDisplay::render(const TrainerScreen &screen)
     if (!_present)
     {
         return;
+    }
+
+    /* A new panel centre moves everything, so the whole frame is painted again. */
+    if (g_centreChanged)
+    {
+        g_centreChanged = false;
+        _valid = false;
     }
 
     if (!_valid)
@@ -582,6 +653,7 @@ void TrainerDisplay::render(const TrainerScreen &screen)
     if (_fxDrawn)
     {
         _fxDrawn = false;
+        _fxCleared = false; /* the next animation clears the panel again by itself */
         _valid = false;
         drawStatic();
         _valid = true;

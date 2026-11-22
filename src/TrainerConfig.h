@@ -175,9 +175,15 @@
 #define TRAINER_WIFI_REPORT_GRACE_MS 45000
 
 /* Panel effects. The trainer task starts one, the display task runs it to the end of
- * its duration, so an animation can never get stuck on with a client that is gone. */
+ * its duration, so an animation can never get stuck on with a client that is gone.
+ *
+ * Everything an animation draws lives in the ring band (between R_IN and R_OUT) and in the
+ * words in the middle: the band writes are a few thousand pixels, the words are redrawn
+ * only when they change. Nothing clears the whole screen while an animation runs, because
+ * this panel scans its framebuffer out while it is written and a full clear every frame is
+ * visible as the whole panel flashing. */
 #define TRAINER_REP_FX_MS 2600     /* a rep counted: the count, and the way back out */
 #define TRAINER_PRAISE_FX_MS 8000  /* the set is finished: the praise animation */
-#define TRAINER_FX_RINGS 3         /* rings in the burst around the middle */
-#define TRAINER_FX_BURST_RADIUS 205
-#define TRAINER_FX_TEXT_WIDTH 430  /* the widest the words may be at the larger size */
+#define TRAINER_FX_ARC_DEG 74.0f   /* how long the travelling arc is */
+#define TRAINER_FX_TURNS 1.5f      /* how often it runs round during one animation */
+#define TRAINER_FX_TEXT_WIDTH 300  /* the widest the words may be at the larger size */

@@ -182,6 +182,10 @@ static void refreshSettings(bool invalidateDisplay)
     holdTracker.retarget(cfg().hold_seconds);
     display.setBrightness(cfg().display_brightness);
 
+    /* The visible round window is not always centred on the panel, so the whole layout is
+     * moved to match. setCentre decides for itself whether anything changed. */
+    TrainerDisplay::setCentre(cfg().panel_centre_x, cfg().panel_centre_y);
+
     if (invalidateDisplay || unitsChanged)
     {
         display.invalidate();

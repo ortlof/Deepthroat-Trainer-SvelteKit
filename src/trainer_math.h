@@ -371,22 +371,27 @@ inline float fxProgress(uint32_t nowMs, uint32_t startMs, uint32_t durationMs)
     return (float)elapsed / (float)durationMs;
 }
 
-/* One ring of the burst: it leaves the middle at its own moment and reaches the rim
- * at the end of its own span, then stays there. The stagger is what makes the burst
- * read as movement rather than as one growing circle. */
-inline float fxRingGauge(uint8_t index, float progress)
+/* The celebration arc. It travels round the ring band and must never leave it, so when it
+ * passes the end of the ring the remainder wraps to the start: this returns the two pieces
+ * to draw, and the second one is empty when the arc does not wrap. Getting the wrap wrong
+ * is what leaves a stray arc segment on the panel, so it is done here, under test. */
+inline void fxSweepSegments(float offset, float arcDegrees, float ringStart, float ringEnd,
+                            float &fromA, float &toA, float &fromB, float &toB)
 {
-    /* Three rings, each a little later than the one before, and the last one still
-     * reaches the rim inside the animation: 0.15 + 3 * 0.15 + 0.55 = 1.00. */
-    const float ringOffset = 0.15f;
-    const float ringSpan = 0.55f;
-    float t = (progress - ringOffset * (float)index) / ringSpan;
-    return (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
-}
+    const float span = ringEnd - ringStart;
+    float travel = (span > 0.0f) ? fmodf(offset, span) : 0.0f;
+    if (travel < 0.0f)
+    {
+        travel += span;
+    }
 
-inline int16_t fxRingRadius(uint8_t index, float progress, int16_t outRadius)
-{
-    return (int16_t)lroundf(fxRingGauge(index, progress) * (float)outRadius);
+    const float start = ringStart + travel;
+    const float end = start + arcDegrees;
+
+    fromA = start;
+    toA = (end < ringEnd) ? end : ringEnd;
+    fromB = ringStart;
+    toB = (end < ringEnd) ? ringStart : (ringStart + (end - ringEnd));
 }
 
 /* A pulse, so an animation that has settled still looks alive. */
