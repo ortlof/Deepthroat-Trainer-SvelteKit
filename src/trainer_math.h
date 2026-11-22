@@ -503,18 +503,29 @@ inline bool fxPulseOn(uint32_t nowMs, uint32_t periodMs)
 
 constexpr int kMenuRowMode = 0;
 constexpr int kMenuRowLevel = 1;
-constexpr int kMenuRowClose = 2;
-constexpr int kMenuRowCount = 3;
+constexpr int kMenuRowCalibrate = 2;
+constexpr int kMenuRowClose = 3;
+constexpr int kMenuRowCount = 4;
 
-constexpr float kMenuRowTopY = -104.0f;
-constexpr float kMenuRowHeight = 62.0f;
-constexpr float kMenuRowGap = 10.0f;
+/* Four rows instead of three: tighter, so the last row and the hint line still land inside the
+ * round window (checked by the host test). */
+constexpr float kMenuRowTopY = -110.0f;
+constexpr float kMenuRowHeight = 50.0f;
+constexpr float kMenuRowGap = 6.0f;
 constexpr float kMenuRowHalfWidth = 150.0f;
 
-/* The button that opens the menu: a chip below the hold bar, inside the ring. */
-constexpr float kMenuButtonHalfWidth = 66.0f;
-constexpr float kMenuButtonHalfHeight = 20.0f;
+/* The button that opens the menu: a chip below the hold bar, inside the ring. The drawn size
+ * and the touch target are separate: the chip is 132x40 px, and a finger gets 160x56. */
+constexpr float kMenuButtonHalfWidth = 66.0f;      /* drawn */
+constexpr float kMenuButtonHalfHeight = 20.0f;     /* drawn */
+constexpr float kMenuButtonTouchHalfWidth = 80.0f; /* accepted */
+constexpr float kMenuButtonTouchHalfHeight = 28.0f;
 constexpr float kMenuButtonCentreY = 158.0f;
+
+/* The battery symbol moves out of the top corner and sits beside the menu button, where the
+ * eye already goes for the controls. Its centre is this far left of the panel centre, clear of
+ * the chip's touch target so a tap there is not a tap on the button. */
+constexpr float kPanelBatteryCentreDx = -100.0f;
 
 /* The panel's absolute bottom band, kept here so it has one home. The footer sits below the
  * menu chip, and the two must not overlap: the footer erases a box around itself before it
@@ -543,12 +554,14 @@ inline int menuRowAt(float dy)
     return -1;
 }
 
-/* The menu button: a rounded rectangle centred on the panel's vertical axis. */
+/* The menu button: a rounded rectangle centred on the panel's vertical axis. The accepted
+ * area is larger than the drawing, because the touch controller reports a point with a few
+ * pixels of noise and a control that needs a precise hit reads as broken. */
 inline bool menuButtonHit(float dx, float dy)
 {
-    return (dx >= -kMenuButtonHalfWidth && dx <= kMenuButtonHalfWidth &&
-            dy >= kMenuButtonCentreY - kMenuButtonHalfHeight &&
-            dy <= kMenuButtonCentreY + kMenuButtonHalfHeight);
+    return (dx >= -kMenuButtonTouchHalfWidth && dx <= kMenuButtonTouchHalfWidth &&
+            dy >= kMenuButtonCentreY - kMenuButtonTouchHalfHeight &&
+            dy <= kMenuButtonCentreY + kMenuButtonTouchHalfHeight);
 }
 
 /* A row has two halves where that makes sense: the left third steps back, the rest
@@ -617,6 +630,86 @@ inline int menuLevelLabel(int level, int count, char *buffer, size_t size)
         snprintf(buffer, size, "%d", level);
     }
     return 0;
+}
+
+/* A row press means nothing unless the menu is on the screen, exactly as on the glass: the
+ * two inputs run the same path. This index is the calibration wizard's capture, which a finger
+ * reaches by tapping while the guide is up. */
+constexpr int kMenuPressCapture = 9;
+/* The menu chip itself: open it, close it, or leave the calibration guide, exactly as a finger
+ * on the chip does. */
+constexpr int kMenuPressChip = 10;
+
+/* ------------------------------------------------------------- calibration ---- */
+
+/* Two points, and the two numbers the depth scale is built from: reference_mm is the distance
+ * that reads 0 and max_depth_mm is the travel that reaches full scale. Point the head at the 0
+ * position and capture its distance; point it at the full position and capture again. The
+ * reference is then the first distance and the travel is the difference between them. */
+
+constexpr float kCalibrationMinTravelMm = 10.0f;
+constexpr float kCalibrationMaxTravelMm = 240.0f;
+
+constexpr int kCalStepOff = 0;
+constexpr int kCalStepZero = 1; /* waiting for the head at the 0 position */
+constexpr int kCalStepFull = 2; /* waiting for the head at the full position */
+constexpr int kCalStepDone = 3; /* showing what was measured */
+
+/* The capture is only taken from a reading that is still. A hand moving the head past the
+ * sensor gives a number the head was passing through, and a scale built on that is wrong
+ * everywhere. */
+constexpr int kCalibrationSamples = 8;
+constexpr float kCalibrationToleranceMm = 6.0f;
+
+inline bool readingIsStable(const float *samples, int count, float toleranceMm = kCalibrationToleranceMm)
+{
+    if (count < kCalibrationSamples)
+    {
+        return false;
+    }
+    float low = samples[0];
+    float high = samples[0];
+    for (int i = 1; i < count; ++i)
+    {
+        if (samples[i] < low)
+        {
+            low = samples[i];
+        }
+        if (samples[i] > high)
+        {
+            high = samples[i];
+        }
+    }
+    return (high - low) <= toleranceMm;
+}
+
+inline float readingAverage(const float *samples, int count)
+{
+    if (count < 1)
+    {
+        return NAN;
+    }
+    float sum = 0.0f;
+    for (int i = 0; i < count; ++i)
+    {
+        sum += samples[i];
+    }
+    return sum / (float)count;
+}
+
+/* The travel between the two capture points, and whether it is a scale worth writing. Both
+ * distances have to be real readings, and the head has to have moved by a sane amount towards
+ * the sensor: a travel of zero means the head never moved, and one beyond the panel's own
+ * range means a capture landed on the wrong end. */
+inline bool calibrationTravel(float zeroRangeMm, float fullRangeMm, float *travelMm)
+{
+    const float travel = zeroRangeMm - fullRangeMm;
+    if (travelMm != nullptr)
+    {
+        *travelMm = travel;
+    }
+    return (zeroRangeMm > 1.0f) && (fullRangeMm > 1.0f) &&
+           (travel >= kCalibrationMinTravelMm) && (travel <= kCalibrationMaxTravelMm);
 }
 
 } /* namespace trainer */

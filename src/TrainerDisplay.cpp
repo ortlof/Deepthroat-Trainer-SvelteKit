@@ -55,10 +55,17 @@ static bool g_centreChanged = false;
 #define FX_TEXT_HALF_W 150
 #define FX_TEXT_HALF_H 100
 
-/* Battery symbol: top left, inside the ring, clear of the peak readout in the middle. */
-#define BATTERY_X 134
-#define BATTERY_CY HEADER_CY
+/* Battery symbol: beside the menu button, where the controls are. It used to sit in the top
+ * left, where it competed with the peak readout. */
+#define BATTERY_X (CX + (int16_t)trainer::kPanelBatteryCentreDx)
+#define BATTERY_CY (CY + (int16_t)trainer::kMenuButtonCentreY)
 #define BATTERY_W 30
+
+/* fillArc works in whole degrees, so the join between the ring's old segment and the new one
+ * lands a pixel either side of where the value says - visible as a thin radial stripe at the
+ * leading edge while the depth moves. Every segment starts this much early and every erase
+ * runs this much past its end, which covers the join. */
+#define GAUGE_SEAM 1.2f
 
 /* ------------------------------------------------------------------ colours -- */
 
@@ -235,6 +242,8 @@ void TrainerDisplay::drawStatic()
     _lastSessionActive = false;
     _batteryBucket = -2; /* the screen is black again: the symbol has to be redrawn */
     _menuButtonLocked = -1; /* so is the menu chip, in whichever state it is now */
+    _calDrawn = false;      /* and the calibration page, when it next runs */
+    _calDrawnStep = 0xFF;
 }
 
 void TrainerDisplay::drawGauge(float gauge, bool inZone)
@@ -254,7 +263,7 @@ void TrainerDisplay::drawGauge(float gauge, bool inZone)
 
     if (target > _drawnGauge + 0.0005f)
     {
-        const float fromAngle = GAUGE_START + GAUGE_SWEEP * _drawnGauge;
+        const float fromAngle = GAUGE_START + GAUGE_SWEEP * _drawnGauge - GAUGE_SEAM;
         const float span = targetAngle - fromAngle;
         if (span > ANGLE_EPSILON)
         {
@@ -263,11 +272,18 @@ void TrainerDisplay::drawGauge(float gauge, bool inZone)
     }
     else if (target < _drawnGauge - 0.0005f)
     {
-        const float fromAngle = GAUGE_START + GAUGE_SWEEP * target;
-        const float span = (GAUGE_START + GAUGE_SWEEP * _drawnGauge) - fromAngle;
-        if (span > ANGLE_EPSILON)
+        /* The erase is a whole degree wide at each end, so the arc's own leading edge is
+         * painted back afterwards: without that, shrinking would nibble a stripe out of the
+         * value it is supposed to keep. */
+        const float newAngle = GAUGE_START + GAUGE_SWEEP * target;
+        const float oldAngle = GAUGE_START + GAUGE_SWEEP * _drawnGauge;
+        if ((oldAngle - newAngle) > ANGLE_EPSILON)
         {
-            _gfx->fillArc(CX, CY, R_OUT, R_IN, fromAngle, fromAngle + span, COL_TRACK);
+            _gfx->fillArc(CX, CY, R_OUT, R_IN, newAngle - GAUGE_SEAM, oldAngle + GAUGE_SEAM, COL_TRACK);
+            if ((newAngle - GAUGE_START) > ANGLE_EPSILON)
+            {
+                _gfx->fillArc(CX, CY, R_OUT, R_IN, newAngle - GAUGE_SEAM, newAngle, color);
+            }
         }
     }
     _drawnGauge = target;
@@ -703,6 +719,8 @@ void TrainerDisplay::drawMenu(const TrainerScreen &screen, uint32_t nowMs)
         drawMenuRow(trainer::kMenuRowMode, "PLAY", trainer::playModeName(screen.menuMode),
                     screen.menuLocked ? COL_DIM : COL_ACCENT);
         drawMenuRow(trainer::kMenuRowLevel, "LEVEL", text, screen.menuLocked ? COL_DIM : COL_ACCENT);
+        drawMenuRow(trainer::kMenuRowCalibrate, "CALIBRATE", "TWO POINTS",
+                    screen.menuLocked ? COL_DIM : COL_ACCENT);
         drawMenuRow(trainer::kMenuRowClose, "", "CLOSE", COL_DIM);
         drawCentered(&FreeSans9pt7b, 1, CX, CY + (int16_t)trainer::menuRowTop(trainer::kMenuRowCount) + 30,
                      "TAP A ROW   LONG PRESS CLOSES", COL_DIM);
@@ -776,6 +794,82 @@ void TrainerDisplay::drawMenuNotice(const TrainerScreen &screen, uint32_t nowMs)
     }
 }
 
+/* The calibration guide. One instruction at a time, the live reading under it so the operator
+ * can see it settle before capturing, and a note that says whether the reading is still. Like
+ * the menu it holds its own frame: it clears when the step changes, and after that only the
+ * lines whose text changed are repainted. */
+void TrainerDisplay::drawCalibration(const TrainerScreen &screen)
+{
+    if (!_calDrawn || (_calDrawnStep != screen.calStep))
+    {
+        _gfx->fillScreen(COL_BG);
+        _calDrawn = true;
+        _calDrawnStep = screen.calStep;
+        _calDrawnLive[0] = '\0';
+        _calDrawnNote[0] = '\0';
+
+        drawCentered(&FreeSansBold12pt7b, 1, CX, CY - 168, "CALIBRATION", COL_DIM);
+
+        if (screen.calStep == trainer::kCalStepZero)
+        {
+            drawCentered(&FreeSansBold12pt7b, 1, CX, CY - 96, "PUT THE HEAD AT 0", COL_TEXT);
+            drawCentered(&FreeSans9pt7b, 1, CX, CY - 58, "then hold still and tap", COL_DIM);
+        }
+        else if (screen.calStep == trainer::kCalStepFull)
+        {
+            drawCentered(&FreeSansBold12pt7b, 1, CX, CY - 96, "PUT THE HEAD AT FULL", COL_TEXT);
+            drawCentered(&FreeSans9pt7b, 1, CX, CY - 58, "then hold still and tap", COL_DIM);
+            char captured[32];
+            snprintf(captured, sizeof(captured), "0 at %d mm", (int)lroundf(screen.calZeroMm));
+            drawCentered(&FreeSans9pt7b, 1, CX, CY - 24, captured, COL_DIM);
+        }
+        else
+        {
+            float travel = 0.0f;
+            trainer::calibrationTravel(screen.calZeroMm, screen.calFullMm, &travel);
+            char line[40];
+            drawCentered(&FreeSansBold12pt7b, 1, CX, CY - 100, "CALIBRATED", COL_ZONE);
+            snprintf(line, sizeof(line), "0 at %d mm", (int)lroundf(screen.calZeroMm));
+            drawCentered(&FreeSans9pt7b, 1, CX, CY - 54, line, COL_TEXT);
+            snprintf(line, sizeof(line), "full at %d mm", (int)lroundf(screen.calFullMm));
+            drawCentered(&FreeSans9pt7b, 1, CX, CY - 24, line, COL_TEXT);
+            snprintf(line, sizeof(line), "travel %d mm", (int)lroundf(travel));
+            drawCentered(&FreeSans9pt7b, 1, CX, CY + 6, line, COL_ZONE);
+            drawCentered(&FreeSans9pt7b, 1, CX, CY + 50, "tap to finish", COL_DIM);
+        }
+    }
+
+    if (screen.calStep == trainer::kCalStepDone)
+    {
+        return; /* the finished page is a still picture */
+    }
+
+    /* The live reading, and whether it has stopped moving. */
+    char live[24];
+    if (screen.calRangeMm > 0.0f)
+    {
+        snprintf(live, sizeof(live), "%d mm", (int)lroundf(screen.calRangeMm));
+    }
+    else
+    {
+        snprintf(live, sizeof(live), "--");
+    }
+    if (strcmp(live, _calDrawnLive) != 0)
+    {
+        eraseBox(CX, CY + 40, 110, 26);
+        drawCentered(&FreeSansBold24pt7b, 1, CX, CY + 40, live, screen.calStable ? COL_ZONE : COL_TEXT);
+        snprintf(_calDrawnLive, sizeof(_calDrawnLive), "%s", live);
+    }
+
+    const char *note = screen.calStable ? "READY - TAP" : "MOVING...";
+    if (strcmp(note, _calDrawnNote) != 0)
+    {
+        eraseBox(CX, CY + 118, 110, 14);
+        drawCentered(&FreeSans9pt7b, 1, CX, CY + 118, note, screen.calStable ? COL_ZONE : COL_WARN);
+        snprintf(_calDrawnNote, sizeof(_calDrawnNote), "%s", note);
+    }
+}
+
 void TrainerDisplay::render(const TrainerScreen &screen)
 {
     if (!_present)
@@ -816,6 +910,26 @@ void TrainerDisplay::render(const TrainerScreen &screen)
         _fxDrawn = false;
         _fxCleared = false; /* the next animation clears the panel again by itself */
         _valid = false;
+        drawStatic();
+        _valid = true;
+    }
+
+    /* The calibration guide owns the panel while it runs, exactly like the menu, and it is
+     * opened from the menu (which closes first), so the two never overlap. It must NOT clear
+     * the full-repaint flag while it is up: that flag would make drawStatic() fill the panel
+     * black on the next frame and the guide would vanish, the way the menu did. */
+    if (screen.calStep != trainer::kCalStepOff)
+    {
+        drawCalibration(screen);
+        _gfx->flush();
+        _frames++;
+        return;
+    }
+
+    if (_calDrawn)
+    {
+        _calDrawn = false;
+        _valid = false; /* the guide covered the panel: everything is painted again */
         drawStatic();
         _valid = true;
     }

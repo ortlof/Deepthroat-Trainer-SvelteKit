@@ -57,6 +57,13 @@ void VL6180Sensor::accountHostGap(uint32_t gapMs)
 
 bool VL6180Sensor::poll()
 {
+    /* Suspended on purpose: no I2C traffic at all. The trainer task brings it back before
+     * anything needs a reading. */
+    if (_suspended)
+    {
+        return false;
+    }
+
     /* A bus read that fails is not a measurement: count it, and after a few in a
      * row declare the sensor gone and let the slow retry look for it again. One
      * NACK is not a lost sensor, and a lost sensor must not turn every poll into
@@ -317,6 +324,41 @@ void VL6180Sensor::startSingleShot()
     _startedMs = millis();
     _measurementRunning = true;
     regWrite(REG_SYSRANGE_START, 0x01);
+}
+
+void VL6180Sensor::suspend()
+{
+    if (!_present || _suspended)
+    {
+        return;
+    }
+    /* The register both paths share: 0 in SYSRANGE_START ends continuous ranging, and a single
+     * shot is only started on demand anyway. The tuning registers stay as they are, so waking
+     * up is one write. */
+    regWrite(REG_SYSRANGE_START, 0x00);
+    _measurementRunning = false;
+    _suspended = true;
+    /* No reading rather than a stale one: the panel then shows -- instead of a number that is
+     * no longer measured, and the depth falls back to 0 on its own timeout. */
+    _rangeMm = NAN;
+    _status = 0xFF;
+    Serial.println("[sensor] suspended: nothing is running");
+}
+
+void VL6180Sensor::resume()
+{
+    if (!_present || !_suspended)
+    {
+        return;
+    }
+    _suspended = false;
+    _lastSampleMs = 0;
+    _measurementRunning = false;
+    if ((_mode == Mode::continuous) && _useLibrary)
+    {
+        _chip.startRangeContinuous(_periodMs);
+    }
+    Serial.println("[sensor] resumed");
 }
 
 bool VL6180Sensor::readResult()

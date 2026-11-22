@@ -363,11 +363,27 @@ int main()
                    ((float)kPanelFooterCy + 10.0f - centreY) < visibleRadius);
     }
 
-    /* The chip: a tap on it opens the menu, a tap beside it starts a session instead. */
+    /* The chip: a tap on it opens the menu, a tap beside it starts a session instead. The
+     * accepted area is deliberately larger than the drawing. */
     expectTrue("the middle of the chip is a hit", menuButtonHit(0.0f, kMenuButtonCentreY));
-    expectTrue("the far edge of the chip is still a hit", menuButtonHit(kMenuButtonHalfWidth - 1.0f, kMenuButtonCentreY));
-    expectTrue("beside the chip is a miss", !menuButtonHit(kMenuButtonHalfWidth + 2.0f, kMenuButtonCentreY));
-    expectTrue("above the chip is a miss", !menuButtonHit(0.0f, kMenuButtonCentreY - kMenuButtonHalfHeight - 2.0f));
+    expectTrue("the outer edge of the accepted area is a hit",
+               menuButtonHit(kMenuButtonTouchHalfWidth - 0.5f, kMenuButtonCentreY));
+    expectTrue("beside the accepted area is a miss",
+               !menuButtonHit(kMenuButtonTouchHalfWidth + 2.0f, kMenuButtonCentreY));
+    expectTrue("above the accepted area is a miss",
+               !menuButtonHit(0.0f, kMenuButtonCentreY - kMenuButtonTouchHalfHeight - 2.0f));
+    expectTrue("the accepted area is larger than the drawing",
+               kMenuButtonTouchHalfWidth > kMenuButtonHalfWidth &&
+               kMenuButtonTouchHalfHeight > kMenuButtonHalfHeight);
+    expectTrue("the drawn chip still fits inside the accepted area",
+               kMenuButtonHalfWidth < kMenuButtonTouchHalfWidth &&
+               kMenuButtonHalfHeight < kMenuButtonTouchHalfHeight);
+    /* The battery sits beside the chip and outside its touch target, so tapping the battery
+     * is not tapping the button. */
+    expectTrue("the battery is left of the chip",
+               kPanelBatteryCentreDx < -kMenuButtonHalfWidth);
+    expectTrue("the battery is outside the chip's touch target",
+               (kPanelBatteryCentreDx + 15.0f) < -kMenuButtonTouchHalfWidth);
 
     /* The level dial: free play, then 1..count, and it turns both ways. */
     expectInt("from free play, forward is level 1", menuLevelStep(0, 5, 1), 1);
@@ -397,6 +413,35 @@ int main()
         expectStr("a level is numbered", label, "3");
         menuLevelLabel(9, 5, label, sizeof(label));
         expectStr("a level out of range reads as free play", label, "FREE");
+    }
+
+    /* ---- the calibration guide: two points, and the scale they make ---------- */
+    {
+        float travel = 0.0f;
+        expectTrue("a real travel is accepted", calibrationTravel(150.0f, 12.0f, &travel));
+        expectNear("the travel is the difference between the two points", travel, 138.0f);
+        expectTrue("no movement at all is refused", !calibrationTravel(150.0f, 150.0f, &travel));
+        expectTrue("a head that moved the wrong way is refused", !calibrationTravel(150.0f, 190.0f, &travel));
+        expectNear("the refused travel is still reported", travel, -40.0f);
+        expectTrue("a travel below the minimum is refused", !calibrationTravel(150.0f, 145.0f, &travel));
+        expectTrue("a travel beyond the panel's scale is refused", !calibrationTravel(300.0f, 10.0f, &travel));
+        expectTrue("a missing reading is refused", !calibrationTravel(-1.0f, 20.0f, &travel));
+        expectTrue("exactly the minimum travel is accepted", calibrationTravel(100.0f, 90.0f, &travel));
+
+        float samples[kCalibrationSamples] = {150.0f, 151.0f, 149.5f, 150.5f, 150.0f, 149.0f, 151.0f, 150.0f};
+        expectTrue("a still reading is stable", readingIsStable(samples, kCalibrationSamples));
+        expectNear("the average of the window", readingAverage(samples, kCalibrationSamples), 150.125f);
+        samples[3] = 170.0f;
+        expectTrue("a moving reading is not stable", !readingIsStable(samples, kCalibrationSamples));
+        expectTrue("a short window is not stable", !readingIsStable(samples, 3));
+
+        /* Four rows now, and the last one still has to be reachable and inside the window. */
+        expectInt("the guide is the third row", kMenuRowCalibrate, 2);
+        expectInt("CLOSE moved to the fourth row", kMenuRowClose, 3);
+        expectInt("there are four rows to draw", kMenuRowCount, 4);
+        expectInt("the last row is reachable", menuRowAt(menuRowTop(kMenuRowCount - 1) + 1.0f), kMenuRowCount - 1);
+        expectInt("just below the last row is still a miss",
+                  menuRowAt(menuRowTop(kMenuRowCount - 1) + kMenuRowHeight + 2.0f), -1);
     }
 
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);

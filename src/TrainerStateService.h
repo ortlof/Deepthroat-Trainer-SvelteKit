@@ -67,6 +67,15 @@ public:
     float rangeMm = -1.0f; /* -1: no usable sample */
     uint32_t sensorGood = 0;
     uint32_t sensorBad = 0;
+    /* True while ranging is stopped because nothing is running. */
+    bool sensorSuspended = false;
+
+    /* The calibration guide, published so a client can watch it run. Written by the device. */
+    uint8_t calStep = 0;
+    float calRangeMm = -1.0f;
+    float calZeroMm = -1.0f;
+    float calFullMm = -1.0f;
+    bool calStable = false;
 
     /* --- what the trainer makes of it --- */
     float depthMm = 0.0f;
@@ -168,6 +177,13 @@ public:
         root["range_mm"] = state.rangeMm;
         root["sensor_good"] = state.sensorGood;
         root["sensor_bad"] = state.sensorBad;
+        root["sensor_suspended"] = state.sensorSuspended;
+        /* the calibration guide */
+        root["cal_step"] = state.calStep;
+        root["cal_range_mm"] = state.calRangeMm;
+        root["cal_zero_mm"] = state.calZeroMm;
+        root["cal_full_mm"] = state.calFullMm;
+        root["cal_stable"] = state.calStable;
 
         /* trainer */
         root["depth_mm"] = state.depthMm;
@@ -240,7 +256,7 @@ public:
         const bool displayOn = root["display_on"] | state.displayOn;
         const bool menuOpen = root["menu_open"] | state.menuOpen;
         int menuPress = root["menu_press"] | (int)state.menuPress;
-        menuPress = constrain(menuPress, -1, 2); /* -1 = nothing, 0..2 = a menu row */
+        menuPress = constrain(menuPress, -1, 10); /* -1 nothing, 0..3 row, 9 capture, 10 the chip */
 
         /* A panel effect is always taken as a change, so the same animation can be
          * started twice in a row. The client only names the effect and its number; the

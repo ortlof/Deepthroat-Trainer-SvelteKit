@@ -114,6 +114,11 @@
 /* Rep mode: the depth must come back to this before the next rep can count. "Fully
  * back to 0" in practice, with room for the sensor's own noise floor. */
 #define TRAINER_REP_RELEASE_MM 8.0f
+
+/* Nothing running and nobody touching the panel for this long: stop ranging. The sensor costs
+ * power, shares the one I2C bus with the touch controller and the expander, and has nothing to
+ * say while no play is on. Any touch, and starting a play, wakes it again. */
+#define TRAINER_SENSOR_IDLE_MS 90000
 /* A controller that went to sleep wakes on a touch, and a reset through the
  * expander wakes it as well. This is the fallback interval for a board whose
  * interrupt line is not connected; the expander answers, so it costs no NACK. */

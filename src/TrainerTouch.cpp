@@ -215,9 +215,12 @@ void TrainerTouch::applyBlock(uint32_t now, const uint8_t *block)
 
     if (!down && _pressed)
     {
-        const uint32_t held = now - _pressStartMs;
         _pressed = false;
-        if (!_longFired && held <= TRAINER_TOUCH_TAP_MS)
+        /* Anything released before the long press fired is a tap, however slow it was. The
+         * old rule also demanded held <= TRAINER_TOUCH_TAP_MS, which made every press between
+         * that and the long-press threshold do nothing at all - a finger that rests on the
+         * glass a little too long looks like a dead button. */
+        if (!_longFired)
         {
             _pending = Event::tap;
         }

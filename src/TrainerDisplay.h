@@ -75,6 +75,14 @@ struct TrainerScreen
     char menuNotice[28] = "";  /* shown for a couple of seconds after a refused tap */
     uint32_t menuNoticeMs = 0;
 
+    /* The calibration guide, when it is running. It takes the panel from the menu, and it needs
+     * the sensor awake: the point of it is to record what the sensor reads at each end. */
+    uint8_t calStep = 0;      /* 0 off, else trainer::kCalStepZero/Full/Done */
+    float calRangeMm = -1.0f; /* the live reading, so the operator can see it settle */
+    float calZeroMm = -1.0f;  /* captured at the 0 position */
+    float calFullMm = -1.0f;  /* captured at the full position */
+    bool calStable = false;   /* true when the reading has stopped moving */
+
     /* One line at the bottom: network and sensor. A plain char array, because
      * this struct is copied between the trainer task and the display task and
      * must stay a POD (see the snapshot lock in main.cpp). */
@@ -143,6 +151,14 @@ private:
     void drawMenu(const TrainerScreen &screen, uint32_t nowMs);
     void drawMenuRow(int row, const char *label, const char *value, uint16_t valueColor);
     void drawMenuNotice(const TrainerScreen &screen, uint32_t nowMs);
+
+    /* The calibration guide: a page of its own with one instruction at a time and the live
+     * sensor reading, so the operator can see it stop moving before capturing it. */
+    void drawCalibration(const TrainerScreen &screen);
+    bool _calDrawn = false;
+    uint8_t _calDrawnStep = 0xFF;
+    char _calDrawnLive[24] = "";
+    char _calDrawnNote[32] = "";
 
     Arduino_XL9535SWSPI *_bus = nullptr;
     Arduino_ESP32RGBPanel *_panel = nullptr;

@@ -147,6 +147,7 @@ static float readBatteryVolts();
 static void handleTouch();
 static void openMenu();
 static void closeMenu();
+static void pressMenuChip();
 static void applyMenuPress(int row, float dx);
 static void refuseWhilePlaying(const char *what);
 
@@ -158,6 +159,20 @@ static void refuseWhilePlaying(const char *what);
 static bool menuOpen = false;
 static char menuNotice[28] = "";
 static uint32_t menuNoticeMs = 0;
+
+/* The calibration guide: which step it is on, the two captured distances, and the window of
+ * recent readings that decides whether the head has stopped moving. */
+static uint8_t calStep = trainer::kCalStepOff;
+static float calZeroMm = -1.0f;
+static float calFullMm = -1.0f;
+static float calSamples[trainer::kCalibrationSamples] = {0};
+static int calSampleCount = 0;
+static float calRangeMm = -1.0f;
+static bool calStable = false;
+static void startCalibration();
+static void cancelCalibration();
+static void captureCalibrationPoint();
+static void calibrationSample();
 static bool applyRadioSettings();
 static bool radioSettingsApplied = false;
 static void tryPlainJoin();
@@ -585,6 +600,8 @@ static void printStatusLine()
 
 static void startSession()
 {
+    /* A play always measures, so the sensor comes back before the first sample is wanted. */
+    sensor.resume();
     if (session.active())
     {
         return;
@@ -787,15 +804,25 @@ static void applyTrainerStateToSession(const String &originId)
      * screen, exactly as it does under a finger: both inputs run the same path. */
     if (command.menuPress >= 0)
     {
-        const int row = command.menuPress;
+        const int press = command.menuPress;
         trainerStateService.update([](TrainerState &state)
                                    {
             state.menuPress = -1;
             return StateUpdateResult::CHANGED; },
                                    TRAINER_DEVICE_ORIGIN);
-        if (menuOpen)
+        if (press == trainer::kMenuPressCapture)
         {
-            applyMenuPress(row, 0.0f);
+            /* The guide's capture. A finger reaches it by tapping while the guide is up; this
+             * is the same call, so the wizard can be exercised without one. */
+            captureCalibrationPoint();
+        }
+        else if (press == trainer::kMenuPressChip)
+        {
+            pressMenuChip();
+        }
+        else if (menuOpen && press < trainer::kMenuRowCount)
+        {
+            applyMenuPress(press, 0.0f);
         }
     }
 
@@ -875,6 +902,13 @@ static void buildSnapshot()
     strncpy(screen.menuNotice, menuNotice, sizeof(screen.menuNotice) - 1);
     screen.menuNotice[sizeof(screen.menuNotice) - 1] = '\0';
     screen.menuNoticeMs = menuNoticeMs;
+
+    /* The calibration guide, when it runs. It needs the same snapshot the other screens do. */
+    screen.calStep = (uint8_t)calStep;
+    screen.calRangeMm = calRangeMm;
+    screen.calZeroMm = calZeroMm;
+    screen.calFullMm = calFullMm;
+    screen.calStable = calStable;
 
     /* A panel animation in flight. Its start time lives in the state, so it survives
      * this snapshot being rebuilt ten times a second and ends on its own clock. */
@@ -1015,6 +1049,12 @@ static void publishState()
         state.touchReadFailures = touch.readFailures();
         state.touchIrqPulses = touch.irqPulses();
         state.touchFrames = touch.touchFrames();
+        if (state.sensorSuspended != sensor.suspended()) { state.sensorSuspended = sensor.suspended(); changed = true; }
+        if (state.calStep != calStep) { state.calStep = calStep; changed = true; }
+        if (fabsf(state.calRangeMm - calRangeMm) >= 0.5f) { state.calRangeMm = calRangeMm; changed = true; }
+        if (fabsf(state.calZeroMm - calZeroMm) >= 0.5f) { state.calZeroMm = calZeroMm; changed = true; }
+        if (fabsf(state.calFullMm - calFullMm) >= 0.5f) { state.calFullMm = calFullMm; changed = true; }
+        if (state.calStable != calStable) { state.calStable = calStable; changed = true; }
         if (fabsf(state.batteryV - battery) >= 0.05f) { state.batteryV = battery; changed = true; }
         if (!state.batteryKnown) { state.batteryKnown = true; changed = true; }
 
@@ -1049,6 +1089,26 @@ static void closeMenu()
     /* Nothing to repaint by hand: the display draws the menu only while the snapshot says
      * it is open, and it repaints the whole frame when that flag goes away. */
     menuOpen = false;
+}
+
+/* What the menu chip does, for a finger and for a client that drives it: leave the calibration
+ * guide if it is up, otherwise toggle the menu. One function, so the two cannot drift. */
+static void pressMenuChip()
+{
+    if (calStep != trainer::kCalStepOff)
+    {
+        cancelCalibration();
+        return;
+    }
+    if (menuOpen)
+    {
+        closeMenu();
+        setNotice("menu closed");
+    }
+    else
+    {
+        openMenu();
+    }
 }
 
 static void openMenu()
@@ -1116,6 +1176,11 @@ static void applyMenuPress(int row, float dx)
         Serial.printf("[menu] %s\n", buffer);
         break;
     }
+    case trainer::kMenuRowCalibrate:
+        /* Two points, and the guide takes the panel from here. */
+        startCalibration();
+        break;
+
     case trainer::kMenuRowClose:
         closeMenu();
         setNotice("menu closed");
@@ -1124,6 +1189,134 @@ static void applyMenuPress(int row, float dx)
     default:
         break;
     }
+}
+
+/* --------------------------------------------------------------- calibration ---- */
+
+/* The guide, as Basti asked for it: "put the head at 0, press touch; then put the head to full,
+ * press touch". Those two readings are the whole depth scale - the first is the distance that
+ * reads 0, the difference between them is the travel that reaches full scale - so the two
+ * numbers the trainer uses come out of the two positions rather than out of a slider.
+ *
+ * A capture is only taken from a reading that has stopped moving. A head in motion gives a
+ * number it was passing through, and a scale built on one of those is wrong everywhere. */
+
+static void calibrationSample()
+{
+    const float range = sensor.rangeMm();
+    if (!trainer::rangeIsUsable(range))
+    {
+        return; /* a missing sample must not enter the window as a number */
+    }
+    for (int i = trainer::kCalibrationSamples - 1; i > 0; --i)
+    {
+        calSamples[i] = calSamples[i - 1];
+    }
+    calSamples[0] = range;
+    if (calSampleCount < trainer::kCalibrationSamples)
+    {
+        calSampleCount++;
+    }
+    calRangeMm = range; /* the newest first: what the sensor sees now */
+    calStable = trainer::readingIsStable(calSamples, calSampleCount);
+}
+
+static void startCalibration()
+{
+    sensor.resume(); /* the whole point is to read the sensor at each end */
+    calStep = trainer::kCalStepZero;
+    calZeroMm = -1.0f;
+    calFullMm = -1.0f;
+    calSampleCount = 0;
+    calRangeMm = sensor.rangeMm();
+    calStable = false;
+    closeMenu(); /* the guide takes the panel */
+    setNotice("calibration: put the head at the 0 position");
+    Serial.println("[cal] step 1: capture the 0 position");
+}
+
+static void cancelCalibration()
+{
+    if (calStep == trainer::kCalStepOff)
+    {
+        return;
+    }
+    calStep = trainer::kCalStepOff;
+    setNotice("calibration cancelled");
+    Serial.println("[cal] cancelled");
+}
+
+static void captureCalibrationPoint()
+{
+    if (calStep == trainer::kCalStepOff)
+    {
+        return;
+    }
+
+    if (calStep == trainer::kCalStepDone)
+    {
+        cancelCalibration();
+        setNotice("calibration finished");
+        return;
+    }
+
+    if (!calStable)
+    {
+        snprintf(menuNotice, sizeof(menuNotice), "HOLD STILL");
+        menuNoticeMs = millis();
+        setNotice("wait for the reading to stop moving");
+        return;
+    }
+
+    const float captured = trainer::readingAverage(calSamples, calSampleCount);
+
+    if (calStep == trainer::kCalStepZero)
+    {
+        calZeroMm = captured;
+        calStep = trainer::kCalStepFull;
+        calSampleCount = 0;
+        calStable = false;
+        setNotice("calibration: put the head at the full position");
+        Serial.printf("[cal] 0 position captured at %d mm\n", (int)lroundf(calZeroMm));
+        return;
+    }
+
+    /* The full position. */
+    calFullMm = captured;
+    float travel = 0.0f;
+    if (!trainer::calibrationTravel(calZeroMm, calFullMm, &travel))
+    {
+        char buffer[72];
+        snprintf(buffer, sizeof(buffer), "refused: travel %d mm, capture the 0 point again",
+                 (int)lroundf(travel));
+        setNotice(buffer);
+        snprintf(menuNotice, sizeof(menuNotice), "TRAVEL %d mm - RETRY", (int)lroundf(travel));
+        menuNoticeMs = millis();
+        calStep = trainer::kCalStepZero;
+        calSampleCount = 0;
+        calStable = false;
+        Serial.printf("[cal] %s\n", buffer);
+        return;
+    }
+
+    /* Write it. The reference IS the captured 0 distance now, the travel is the scale, and the
+     * old trim is meaningless against a new reference, so it goes to zero. */
+    const float zero = calZeroMm;
+    trainerSettingsService.update([zero, travel](TrainerSettings &value)
+                                  {
+        value.reference_mm = zero;
+        value.max_depth_mm = travel;
+        value.calibration_mm = 0.0f;
+        return StateUpdateResult::CHANGED; },
+                                  TRAINER_PANEL_ORIGIN);
+
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "calibrated: 0 at %d mm, full at %d mm, travel %d mm",
+             (int)lroundf(zero), (int)lroundf(calFullMm), (int)lroundf(travel));
+    setNotice(buffer);
+    Serial.printf("[cal] %s\n", buffer);
+    esp32sveltekit.getNotificationService()->pushNotification(buffer, PUSHSUCCESS);
+    calStep = trainer::kCalStepDone;
 }
 
 /* ------------------------------------------------------------------ touch ---- */
@@ -1138,20 +1331,37 @@ static void handleTouch()
 
     lastActivityMs = millis();
 
-    /* The menu is the only thing that changes what the trainer plays, and a long press is
-     * the way out of it. The other long press (zero the reference) keeps its meaning when
-     * the menu is closed. */
-    if (event == TrainerTouch::Event::longPress)
+    /* Any touch wakes the sensor: the panel is being used, so the depth readout should be live
+     * again rather than showing --. */
+    sensor.resume();
+
+    const float dx = (float)touch.x() - (float)cfg().panel_centre_x;
+    const float dy = (float)touch.y() - (float)cfg().panel_centre_y;
+
+    /* The chip answers over its whole target, whatever the press's length. A finger that rests
+     * on a button a moment too long used to fall through to the long press, which solves the
+     * depth zero - a hidden way to move the whole scale while aiming at a menu. */
+    if (trainer::menuButtonHit(dx, dy))
     {
-        if (menuOpen)
+        pressMenuChip();
+        return;
+    }
+
+    /* The calibration guide: a tap anywhere captures the reading on the glass, and a long press
+     * gives up. Both are what the guide's own text says. */
+    if (calStep != trainer::kCalStepOff)
+    {
+        if (event == TrainerTouch::Event::longPress)
         {
-            closeMenu();
-            setNotice("menu closed");
+            cancelCalibration();
             return;
         }
-        /* The long press solves the depth zero, which moves every reading the panel shows
-         * and every goal the play is measuring against. Under a running set that is a
-         * change to the game, so it is refused like the menu rows. */
+        captureCalibrationPoint();
+        return;
+    }
+
+    if (event == TrainerTouch::Event::longPress)
+    {
         if (!trainer::menuUsable(session.active()))
         {
             refuseWhilePlaying("ZERO");
@@ -1161,9 +1371,6 @@ static void handleTouch()
         return;
     }
 
-    const float dx = (float)touch.x() - (float)cfg().panel_centre_x;
-    const float dy = (float)touch.y() - (float)cfg().panel_centre_y;
-
     if (menuOpen)
     {
         const int row = trainer::menuRowAt(dy);
@@ -1172,14 +1379,6 @@ static void handleTouch()
             applyMenuPress(row, dx);
         }
         return; /* a tap that misses every row leaves the menu up */
-    }
-
-    /* The chip under the hold bar opens the menu. While a set runs it refuses, and says so
-     * on the panel: a control that does nothing at all reads as broken. */
-    if (trainer::menuButtonHit(dx, dy))
-    {
-        openMenu();
-        return;
     }
 
     /* A tap starts a session, and a tap during a session ends it. */
@@ -1267,6 +1466,19 @@ void trainerTask(void *pvParameters)
         {
             lastStatusMs = millis();
             printStatusLine();
+        }
+
+        /* The sensor sleeps while nothing runs: no samples, no I2C traffic, and the panel shows
+         * -- instead of a number nobody is measuring. A touch or a session wakes it. The guide
+         * needs it awake for as long as it runs. */
+        if (calStep != trainer::kCalStepOff)
+        {
+            calibrationSample();
+        }
+        else if (!session.active() && !menuOpen && !sensor.suspended() &&
+                 (millis() - lastActivityMs) > TRAINER_SENSOR_IDLE_MS)
+        {
+            sensor.suspend();
         }
 
         /* The sensor and the touch controller share one bus, so both are polled

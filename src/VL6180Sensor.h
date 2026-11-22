@@ -70,6 +70,13 @@ public:
 
     void setSamplePeriodMs(uint16_t periodMs);
 
+    /* Stop ranging while nothing runs. The chip keeps its tuning; the cost is the first
+     * sample's latency after the next wake-up, which is why this is for idle minutes rather
+     * than for a pause. Suspended, poll() does no I2C traffic at all. */
+    void suspend();
+    void resume();
+    bool suspended() const { return _suspended; }
+
     /* A host task that was blocked (a panel repaint, a WiFi scan) is not a sensor
      * that stopped delivering. Shift the stall reference by the gap so continuous
      * mode is not abandoned because of it. */
@@ -96,6 +103,8 @@ private:
 
     uint8_t _address = TRAINER_SENSOR_ADDR;
     bool _present = false;
+    /* True while ranging is stopped on purpose: no I2C traffic, no samples. */
+    bool _suspended = false;
     Mode _mode = Mode::absent;
 
     float _rangeMm = NAN;
