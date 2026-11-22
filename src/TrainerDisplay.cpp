@@ -49,11 +49,13 @@ static bool g_centreChanged = false;
 #define FOOTER_CY trainer::kPanelFooterCy
 #define HEADER_CY 100
 
-/* The box the animation's words are drawn in. It is cleared on every frame of an animation,
- * and because the panel's background is the same black that costs nothing to look at: the
- * rings simply pass behind the words. */
-#define FX_TEXT_HALF_W 150
-#define FX_TEXT_HALF_H 100
+/* The clear disc the animation's words live in, drawn instead of a rectangle. The rings and the
+ * words share a centre, so a disc means every ring at or above this radius lies wholly outside the
+ * cleared area and cannot be sliced - which is what a rectangular box did, once per frame: a
+ * straight chord of black across each crossing ring, flickering as the rings grew. The radius is
+ * the gauge's own inner radius, so the disc exactly fills the hole the gauge leaves and the words
+ * still fit (their old 150x100 box reached only 180 at the corners). */
+#define FX_CLEAR_RADIUS 182
 
 /* Battery symbol: beside the menu button, where the controls are. It used to sit in the top
  * left, where it competed with the peak readout. */
@@ -617,6 +619,13 @@ void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, flo
     {
         if (radius[i] >= 2)
         {
+            /* A ring inside the clear disc would be drawn and then cleared again on the same
+             * frame: a flicker, and the thing that used to look like a stripe. Skip it. */
+            if (radius[i] <= FX_CLEAR_RADIUS)
+            {
+                _fxRingDrawn[i] = radius[i];
+                continue;
+            }
             const uint16_t color = ((i & 1u) == 0u) ? accent : COL_TRACK;
             _gfx->drawCircle(CX, CY, radius[i], color);
             _gfx->drawCircle(CX, CY, radius[i] - 1, color);
@@ -644,7 +653,10 @@ void TrainerDisplay::drawEffect(const TrainerScreen &screen, uint32_t nowMs, flo
         snprintf(tail, sizeof(tail), "then go again");
     }
 
-    eraseBox(CX, CY + 5, FX_TEXT_HALF_W, FX_TEXT_HALF_H);
+    /* The words sit on top of the rings, inside a disc that no ring enters. Clearing a disc
+     * instead of the old 300x200 rectangle is the whole fix: a rectangle crossed rings that ran
+     * outside it and cut a straight black chord out of each one, every frame. */
+    _gfx->fillCircle(CX, CY, FX_CLEAR_RADIUS, COL_BG);
 
     /* At twice the size a long line would run over the words' box, so the size steps down
      * for anything wide. */
