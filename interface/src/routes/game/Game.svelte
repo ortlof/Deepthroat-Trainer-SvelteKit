@@ -85,6 +85,74 @@
 
 
 	/* The band rail: 0 to 240 mm across, so both thumbs share one scale. */
+	/* ------------------------------------------------------------ ladder builder ---
+	 * Bands of one width, laid end to end from a starting depth, up to the travel the
+	 * calibration measured. The whole ladder comes out of one button instead of ten slider
+	 * pairs, and a shape worth keeping can be saved on the device. */
+	function travelMm(): number {
+		return Number(settings.max_depth_mm ?? 150);
+	}
+	function ladderWidth(): number {
+		return Number(settings.ladder_width ?? 20);
+	}
+	function ladderBase(): number {
+		return Number(settings.ladder_base ?? 0);
+	}
+	function ladderLevels(base = ladderBase(), width = ladderWidth()): number {
+		return Math.min(10, Math.max(1, Math.floor((travelMm() - base + 0.001) / Math.max(1, width))));
+	}
+	function ladderPreview(): string {
+		const base = ladderBase();
+		const width = ladderWidth();
+		const count = ladderLevels();
+		const covered = Math.min(travelMm(), base + count * width);
+		return `${count} bands of ${width} mm, ${base}-${covered} mm of ${travelMm()} mm travel`;
+	}
+	/* Exactly the same layout the firmware's ladderBuild() makes, so the panel and the page
+	 * agree on what the button did. */
+	function buildLadder(base = ladderBase(), width = ladderWidth()) {
+		const count = ladderLevels(base, width);
+		const patch: Record<string, number> = { level_count: count };
+		for (let i = 0; i < 10; i++) {
+			const on = i < count;
+			patch[`level${i + 1}_mm`] = on ? base + i * width : 0;
+			patch[`level${i + 1}_max_mm`] = on ? Math.min(travelMm(), base + (i + 1) * width) : 0;
+		}
+		saveSettings(patch as Partial<TrainerSettings>);
+	}
+	function presetCount(): number {
+		return Number(settings.ladder_preset_count ?? 0);
+	}
+	function presetName(i: number): string {
+		return String(settings[`ladder_preset${i + 1}_name`] ?? '');
+	}
+	function presetSummary(i: number): string {
+		if (i >= presetCount()) return 'empty';
+		return `${String(settings[`ladder_preset${i + 1}_levels`] ?? 0)} x ${String(settings[`ladder_preset${i + 1}_width`] ?? 0)} mm from ${String(settings[`ladder_preset${i + 1}_base`] ?? 0)}`;
+	}
+	function savePreset() {
+		/* Into the next free slot, or over the last one once all four are used. */
+		const slot = Math.min(presetCount(), 3);
+		const patch: Record<string, string | number> = {
+			[`ladder_preset${slot + 1}_name`]: presetNameField.slice(0, 15),
+			[`ladder_preset${slot + 1}_base`]: ladderBase(),
+			[`ladder_preset${slot + 1}_width`]: ladderWidth(),
+			[`ladder_preset${slot + 1}_levels`]: ladderLevels()
+		};
+		if (slot >= presetCount()) patch.ladder_preset_count = slot + 1;
+		saveSettings(patch as Partial<TrainerSettings>);
+	}
+	function loadPreset(i: number) {
+		if (i >= presetCount()) return;
+		const base = Number(settings[`ladder_preset${i + 1}_base`] ?? 0);
+		const width = Number(settings[`ladder_preset${i + 1}_width`] ?? 20);
+		saveSettings({ ladder_base: base, ladder_width: width } as Partial<TrainerSettings>);
+		buildLadder(base, width);
+	}
+
+	/* A name for the shape worth keeping. */
+	let presetNameField = $state('');
+
 	function bandPct(value: number): number {
 		return Math.max(0, Math.min(100, (Number(value) / 240) * 100));
 	}
@@ -285,6 +353,74 @@
 	</div>
 	<div class="label">
 		Depth {state.depth_mm.toFixed(0)} mm, at {state.level_name}. In band: {state.in_zone ? 'yes' : 'no'}.
+	</div>
+</SettingsCard>
+
+<SettingsCard collapsible={false} open={false}>
+	{#snippet icon()}
+		<Ladder class="mr-2 h-6 w-6 shrink-0 self-end" />
+	{/snippet}
+	{#snippet title()}
+		<span>Ladder builder</span>
+	{/snippet}
+
+	<div class="label">
+		Bands of one width, laid end to end from a starting depth, across the travel the
+		calibration measured. This is the same layout the panel's guide leaves behind.
+	</div>
+
+	<div class="grid grid-cols-1 gap-x-8 gap-y-2 md:grid-cols-2">
+		<div class="fieldset">
+			<label class="label" for="ladderWidth">Band width ({ladderWidth()} mm)</label>
+			<input
+				id="ladderWidth"
+				type="range"
+				class="range range-primary"
+				min="5"
+				max="60"
+				step="1"
+				value={ladderWidth()}
+				onchange={(event) => saveSettings({ ladder_width: Number(event.currentTarget.value) } as Partial<TrainerSettings>)}
+			/>
+		</div>
+		<div class="fieldset">
+			<label class="label" for="ladderBase">First band starts at ({ladderBase()} mm)</label>
+			<input
+				id="ladderBase"
+				type="range"
+				class="range range-primary"
+				min="0"
+				max="60"
+				step="5"
+				value={ladderBase()}
+				onchange={(event) => saveSettings({ ladder_base: Number(event.currentTarget.value) } as Partial<TrainerSettings>)}
+			/>
+		</div>
+	</div>
+
+	<div class="label font-medium">{ladderPreview()}</div>
+
+	<div class="mt-2 flex flex-wrap items-center gap-2">
+		<button class="btn btn-primary btn-sm" onclick={() => buildLadder()}>BUILD LADDER</button>
+		<input
+			class="input input-bordered input-sm w-40"
+			type="text"
+			placeholder="preset name"
+			bind:value={presetNameField}
+		/>
+		<button class="btn btn-sm" onclick={savePreset}>SAVE PRESET</button>
+	</div>
+
+	<div class="mt-3 flex flex-wrap gap-2">
+		{#each [0, 1, 2, 3] as slot (slot)}
+			<button
+				class="btn btn-sm {slot < presetCount() ? 'btn-secondary' : 'btn-ghost'}"
+				disabled={slot >= presetCount()}
+				onclick={() => loadPreset(slot)}
+			>
+				{presetName(slot) || `slot ${slot + 1}`} — {presetSummary(slot)}
+			</button>
+		{/each}
 	</div>
 </SettingsCard>
 

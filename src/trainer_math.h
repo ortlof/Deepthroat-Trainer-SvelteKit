@@ -712,4 +712,60 @@ inline bool calibrationTravel(float zeroRangeMm, float fullRangeMm, float *trave
            (travel >= kCalibrationMinTravelMm) && (travel <= kCalibrationMaxTravelMm);
 }
 
+/* ------------------------------------------------------------ ladder builder ---- */
+
+/* The auto ladder: bands of one width laid end to end from a starting depth, filling the travel
+ * the calibration measured. Basti's words for it: "a button for auto level build ... it should
+ * place the ladder on selectable width after another".
+ *
+ * Bands are adjacent, so level n counts from base + (n-1)*width to base + n*width. Only bands
+ * that fit inside the travel are placed, which is what keeps the top level a target rather than
+ * a number the head cannot reach. Returns how many were placed (1..kMaxLevels). */
+inline int ladderBuild(float baseMm, float widthMm, float travelMm,
+                       float lows[kMaxLevels], float highs[kMaxLevels])
+{
+    if (widthMm < 1.0f)
+    {
+        widthMm = 1.0f;
+    }
+    if (baseMm < 0.0f)
+    {
+        baseMm = 0.0f;
+    }
+    if (travelMm <= 0.0f)
+    {
+        travelMm = 1.0f;
+    }
+
+    int count = (int)((travelMm - baseMm + 0.001f) / widthMm);
+    if (count > kMaxLevels)
+    {
+        count = kMaxLevels;
+    }
+    if (count < 1)
+    {
+        count = 1; /* one band, clipped to the travel: better than an empty ladder */
+    }
+
+    for (int i = 0; i < kMaxLevels; ++i)
+    {
+        const float low = baseMm + (float)i * widthMm;
+        float high = low + widthMm;
+        if (high > travelMm)
+        {
+            high = travelMm;
+        }
+        lows[i] = (i < count) ? low : 0.0f;
+        highs[i] = (i < count) ? high : 0.0f;
+    }
+    return count;
+}
+
+/* How much of the travel a built ladder covers, for the preview in the web interface. */
+inline float ladderCoverage(int count, float baseMm, float widthMm, float travelMm)
+{
+    float covered = baseMm + (float)count * widthMm;
+    return (covered > travelMm) ? travelMm : covered;
+}
+
 } /* namespace trainer */

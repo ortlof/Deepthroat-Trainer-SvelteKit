@@ -444,6 +444,32 @@ int main()
                   menuRowAt(menuRowTop(kMenuRowCount - 1) + kMenuRowHeight + 2.0f), -1);
     }
 
+    /* ---- the ladder builder: bands of one width, laid end to end ------------ */
+    {
+        float lows[kMaxLevels];
+        float highs[kMaxLevels];
+        int count = ladderBuild(0.0f, 20.0f, 137.0f, lows, highs);
+        expectInt("a 137 mm travel takes six bands of 20 mm", count, 6);
+        expectNear("the first band starts at the base", lows[0], 0.0f);
+        expectNear("the first band is one width wide", highs[0], 20.0f);
+        expectNear("bands are adjacent, not spaced", lows[1], 20.0f);
+        expectNear("level 6 ends where six widths reach", highs[5], 120.0f);
+        expectNear("level 7 is not used", highs[6], 0.0f);
+
+        expectInt("a width that divides the travel exactly", ladderBuild(0.0f, 20.0f, 120.0f, lows, highs), 6);
+        expectInt("a tenth band is allowed", ladderBuild(0.0f, 12.0f, 120.0f, lows, highs), 10);
+        expectInt("no more than ten, however narrow the bands", ladderBuild(0.0f, 5.0f, 500.0f, lows, highs), kMaxLevels);
+        expectInt("a base offsets the whole ladder", ladderBuild(30.0f, 20.0f, 137.0f, lows, highs), 5);
+        expectNear("and the offset ladder starts at the base", lows[0], 30.0f);
+        expectInt("a width wider than the travel still yields one band", ladderBuild(0.0f, 200.0f, 137.0f, lows, highs), 1);
+        expectNear("that one band is clipped to the travel", highs[0], 137.0f);
+        expectInt("a base beyond the travel yields one clipped band", ladderBuild(200.0f, 20.0f, 137.0f, lows, highs), 1);
+        expectInt("a zero width does not divide by zero", ladderBuild(0.0f, 0.0f, 137.0f, lows, highs), 10);
+        expectInt("exactly the minimum travel", ladderBuild(0.0f, 10.0f, 10.0f, lows, highs), 1);
+        expectNear("the coverage of six bands of 20 mm", ladderCoverage(6, 0.0f, 20.0f, 137.0f), 120.0f);
+        expectNear("coverage never exceeds the travel", ladderCoverage(10, 0.0f, 50.0f, 137.0f), 137.0f);
+    }
+
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);
     return failures == 0 ? 0 : 1;
 }

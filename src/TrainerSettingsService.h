@@ -82,6 +82,22 @@ public:
     int16_t panel_centre_x = 225;
     int16_t panel_centre_y = 231;
 
+    /* --- the ladder builder ---
+     * The auto builder lays bands of one width end to end from a starting depth, up to the
+     * travel the calibration measured. These four presets are the shapes worth keeping, stored
+     * on the device so the choice survives a browser, a phone or a reflash. A preset holds what
+     * the builder needs to reproduce the ladder: where the first band starts, how wide the
+     * bands are, and how many. */
+    static constexpr int kLadderPresets = 4;
+    uint8_t ladder_preset_count = 0; /* how many are saved, 0..kLadderPresets */
+    char ladder_preset_name[kLadderPresets][16] = {"", "", "", ""};
+    float ladder_preset_base[kLadderPresets] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ladder_preset_width[kLadderPresets] = {20.0f, 30.0f, 40.0f, 50.0f};
+    uint8_t ladder_preset_levels[kLadderPresets] = {6, 4, 3, 2};
+    /* The builder's last values, so the web interface opens where it was left. */
+    float ladder_base = 0.0f;
+    float ladder_width = 20.0f;
+
     /* The goals as the pure maths wants them: one array of depths and one of upper limits. */
     void levels(float lows[trainer::kMaxLevels], float highs[trainer::kMaxLevels]) const
     {
@@ -120,6 +136,23 @@ public:
         root["display_timeout_s"] = settings.display_timeout_s;
         root["panel_centre_x"] = settings.panel_centre_x;
         root["panel_centre_y"] = settings.panel_centre_y;
+
+        /* the ladder builder and its saved shapes */
+        root["ladder_base"] = settings.ladder_base;
+        root["ladder_width"] = settings.ladder_width;
+        root["ladder_preset_count"] = settings.ladder_preset_count;
+        char ladderKey[32];
+        for (int i = 0; i < kLadderPresets; ++i)
+        {
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_name", i + 1);
+            root[ladderKey] = settings.ladder_preset_name[i];
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_base", i + 1);
+            root[ladderKey] = settings.ladder_preset_base[i];
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_width", i + 1);
+            root[ladderKey] = settings.ladder_preset_width[i];
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_levels", i + 1);
+            root[ladderKey] = settings.ladder_preset_levels[i];
+        }
     }
 
     static StateUpdateResult update(JsonObject &root, TrainerSettings &settings, const String &originId)
@@ -219,6 +252,41 @@ public:
         int centreY = root["panel_centre_y"] | (int)settings.panel_centre_y;
         centreY = constrain(centreY, 200, 280);
 
+        /* The ladder builder and its saved shapes. These need their own change flag: a
+         * preset-only edit compares equal to every other value and would never be written. */
+        const float ladderBase = root["ladder_base"] | settings.ladder_base;
+        const float ladderWidth = root["ladder_width"] | settings.ladder_width;
+        int presetCount = root["ladder_preset_count"] | (int)settings.ladder_preset_count;
+        presetCount = constrain(presetCount, 0, (int)kLadderPresets);
+        char presetName[kLadderPresets][16];
+        float presetBase[kLadderPresets];
+        float presetWidth[kLadderPresets];
+        int presetLevels[kLadderPresets];
+        bool ladderChanged = (fabsf(ladderBase - settings.ladder_base) > 0.01f) ||
+                             (fabsf(ladderWidth - settings.ladder_width) > 0.01f) ||
+                             (presetCount != (int)settings.ladder_preset_count);
+        char ladderKey[32];
+        for (int i = 0; i < kLadderPresets; ++i)
+        {
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_name", i + 1);
+            const char *nameSource = root[ladderKey];
+            snprintf(presetName[i], sizeof(presetName[i]), "%s",
+                     (nameSource != nullptr) ? nameSource : settings.ladder_preset_name[i]);
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_base", i + 1);
+            presetBase[i] = root[ladderKey] | settings.ladder_preset_base[i];
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_width", i + 1);
+            presetWidth[i] = root[ladderKey] | settings.ladder_preset_width[i];
+            snprintf(ladderKey, sizeof(ladderKey), "ladder_preset%d_levels", i + 1);
+            presetLevels[i] = constrain((int)(root[ladderKey] | (int)settings.ladder_preset_levels[i]),
+                                        1, trainer::kMaxLevels);
+
+            ladderChanged = ladderChanged ||
+                            (strcmp(presetName[i], settings.ladder_preset_name[i]) != 0) ||
+                            (fabsf(presetBase[i] - settings.ladder_preset_base[i]) > 0.01f) ||
+                            (fabsf(presetWidth[i] - settings.ladder_preset_width[i]) > 0.01f) ||
+                            (presetLevels[i] != (int)settings.ladder_preset_levels[i]);
+        }
+
         if (reference == settings.reference_mm && maxDepth == settings.max_depth_mm &&
             calibration == settings.calibration_mm && goalsSame &&
             count == (int)settings.level_count && countDown == settings.level_count_down &&
@@ -228,6 +296,7 @@ public:
             units == (int)settings.units && brightness == (int)settings.display_brightness &&
             dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s &&
             centreX == (int)settings.panel_centre_x && centreY == (int)settings.panel_centre_y &&
+            !ladderChanged &&
             strcmp(praise, settings.praise) == 0)
         {
             return StateUpdateResult::UNCHANGED;
@@ -255,6 +324,16 @@ public:
         settings.display_timeout_s = (uint16_t)timeout;
         settings.panel_centre_x = (int16_t)centreX;
         settings.panel_centre_y = (int16_t)centreY;
+        settings.ladder_base = ladderBase;
+        settings.ladder_width = ladderWidth;
+        settings.ladder_preset_count = (uint8_t)presetCount;
+        for (int i = 0; i < kLadderPresets; ++i)
+        {
+            snprintf(settings.ladder_preset_name[i], sizeof(settings.ladder_preset_name[i]), "%s", presetName[i]);
+            settings.ladder_preset_base[i] = presetBase[i];
+            settings.ladder_preset_width[i] = presetWidth[i];
+            settings.ladder_preset_levels[i] = (uint8_t)presetLevels[i];
+        }
         snprintf(settings.praise, sizeof(settings.praise), "%s", praise);
         return StateUpdateResult::CHANGED;
     }
