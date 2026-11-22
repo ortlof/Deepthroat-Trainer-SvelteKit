@@ -101,17 +101,31 @@
 	function ladderLevels(base = ladderBase(), width = ladderWidth()): number {
 		return Math.min(10, Math.max(1, Math.floor((travelMm() - base + 0.001) / Math.max(1, width))));
 	}
+	/* How many bands the travel can hold at this width. The Bands slider cannot ask for more
+	 * than this, because a band above the travel is a depth the head cannot reach. */
+	function ladderFit(base = ladderBase(), width = ladderWidth()): number {
+		return ladderLevels(base, width);
+	}
+	/* What the Bands slider currently means: the operator's number, or as many as fit. */
+	function ladderBands(): number {
+		const fit = ladderFit();
+		return ladderWanted > 0 ? Math.min(ladderWanted, fit) : fit;
+	}
 	function ladderPreview(): string {
 		const base = ladderBase();
 		const width = ladderWidth();
-		const count = ladderLevels();
+		const count = ladderBands();
+		const fit = ladderFit();
 		const covered = Math.min(travelMm(), base + count * width);
-		return `${count} bands of ${width} mm, ${base}-${covered} mm of ${travelMm()} mm travel`;
+		const capped = count < ladderWanted ? ` — ${fit} is the most that fit` : '';
+		return `${count} bands of ${width} mm, ${base}-${covered} mm of ${travelMm()} mm travel${capped}`;
 	}
 	/* Exactly the same layout the firmware's ladderBuild() makes, so the panel and the page
-	 * agree on what the button did. */
-	function buildLadder(base = ladderBase(), width = ladderWidth()) {
-		const count = ladderLevels(base, width);
+	 * agree on what the button did. want is the Bands slider; 0 means as many as fit. */
+	function buildLadder(base = ladderBase(), width = ladderWidth(), want = ladderWanted) {
+		const fit = ladderFit(base, width);
+		const count = want > 0 ? Math.min(want, fit) : fit;
+		ladderWanted = count;
 		const patch: Record<string, number> = { level_count: count };
 		for (let i = 0; i < 10; i++) {
 			const on = i < count;
@@ -137,7 +151,7 @@
 			[`ladder_preset${slot + 1}_name`]: presetNameField.slice(0, 15),
 			[`ladder_preset${slot + 1}_base`]: ladderBase(),
 			[`ladder_preset${slot + 1}_width`]: ladderWidth(),
-			[`ladder_preset${slot + 1}_levels`]: ladderLevels()
+			[`ladder_preset${slot + 1}_levels`]: ladderBands()
 		};
 		if (slot >= presetCount()) patch.ladder_preset_count = slot + 1;
 		saveSettings(patch as Partial<TrainerSettings>);
@@ -146,12 +160,14 @@
 		if (i >= presetCount()) return;
 		const base = Number(settings[`ladder_preset${i + 1}_base`] ?? 0);
 		const width = Number(settings[`ladder_preset${i + 1}_width`] ?? 20);
+		const levels = Number(settings[`ladder_preset${i + 1}_levels`] ?? 0);
 		saveSettings({ ladder_base: base, ladder_width: width } as Partial<TrainerSettings>);
-		buildLadder(base, width);
+		buildLadder(base, width, levels);
 	}
 
-	/* A name for the shape worth keeping. */
+	/* A name for the shape worth keeping, and how many bands the operator asked for. */
 	let presetNameField = $state('');
+	let ladderWanted = $state(0); /* 0 = as many as the travel holds */
 
 	function bandPct(value: number): number {
 		return Math.max(0, Math.min(100, (Number(value) / 240) * 100));
@@ -381,6 +397,21 @@
 				step="1"
 				value={ladderWidth()}
 				onchange={(event) => saveSettings({ ladder_width: Number(event.currentTarget.value) } as Partial<TrainerSettings>)}
+			/>
+		</div>
+		<div class="fieldset">
+			<label class="label" for="ladderBands">
+				Bands ({ladderBands()} of {ladderFit()} that fit)
+			</label>
+			<input
+				id="ladderBands"
+				type="range"
+				class="range range-primary"
+				min="1"
+				max="10"
+				step="1"
+				value={ladderBands()}
+				onchange={(event) => buildLadder(ladderBase(), ladderWidth(), Number(event.currentTarget.value))}
 			/>
 		</div>
 		<div class="fieldset">

@@ -718,11 +718,12 @@ inline bool calibrationTravel(float zeroRangeMm, float fullRangeMm, float *trave
  * the calibration measured. Basti's words for it: "a button for auto level build ... it should
  * place the ladder on selectable width after another".
  *
- * Bands are adjacent, so level n counts from base + (n-1)*width to base + n*width. Only bands
- * that fit inside the travel are placed, which is what keeps the top level a target rather than
- * a number the head cannot reach. Returns how many were placed (1..kMaxLevels). */
+ * Bands are adjacent, so level n counts from base + (n-1)*width to base + n*width. wantLevels is
+ * how many the operator asked for from the Bands slider; 0 means "as many as fit". The travel
+ * still caps it, because a band above the travel is a target the head cannot reach - so the
+ * request is an upper bound, not a promise. Returns how many were placed (1..kMaxLevels). */
 inline int ladderBuild(float baseMm, float widthMm, float travelMm,
-                       float lows[kMaxLevels], float highs[kMaxLevels])
+                       float lows[kMaxLevels], float highs[kMaxLevels], int wantLevels = 0)
 {
     if (widthMm < 1.0f)
     {
@@ -741,6 +742,10 @@ inline int ladderBuild(float baseMm, float widthMm, float travelMm,
     if (count > kMaxLevels)
     {
         count = kMaxLevels;
+    }
+    if (wantLevels > 0 && wantLevels < count)
+    {
+        count = wantLevels;
     }
     if (count < 1)
     {

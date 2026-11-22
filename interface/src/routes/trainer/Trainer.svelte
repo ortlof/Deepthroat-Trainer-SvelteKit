@@ -275,6 +275,90 @@
 		return minutes + ':' + String(seconds).padStart(2, '0');
 	}
 
+	/* ---------------------------------------------------------------------- sound ---
+	 * Confirms through the phone's own speaker. No hardware on the trainer, no pin to find:
+	 * the phone is already connected, so it is already the speaker. A browser will not make a
+	 * sound until the page has been touched once, which is why this is a switch the operator
+	 * turns on rather than something that starts by itself.
+	 *
+	 * Speech comes from the phone as well, so the trainer can name a level or read its own
+	 * notice without a voice module or a sound file on the board. */
+	let soundOn = $state(false);
+	let audio: AudioContext | null = null;
+	let spoken = '';
+
+	function tone(freq: number, ms: number, gain = 0.12) {
+		if (!soundOn || !audio) return;
+		const osc = audio.createOscillator();
+		const vol = audio.createGain();
+		osc.type = 'sine';
+		osc.frequency.value = freq;
+		vol.gain.value = gain;
+		osc.connect(vol).connect(audio.destination);
+		osc.start();
+		osc.stop(audio.currentTime + ms / 1000);
+	}
+
+	function chirp(freqs: number[]) {
+		freqs.forEach((freq, index) => {
+			setTimeout(() => tone(freq, 140), index * 150);
+		});
+	}
+
+	function say(text: string) {
+		if (!soundOn || !text || text === spoken) return;
+		if (!('speechSynthesis' in window)) return;
+		spoken = text;
+		const line = new SpeechSynthesisUtterance(text);
+		line.rate = 1.05;
+		window.speechSynthesis.cancel();
+		window.speechSynthesis.speak(line);
+	}
+
+	async function toggleSound() {
+		soundOn = !soundOn;
+		if (soundOn) {
+			audio ??= new AudioContext();
+			await audio.resume();
+			spoken = '';
+			tone(660, 120);
+			say('sound on');
+		} else if ('speechSynthesis' in window) {
+			window.speechSynthesis.cancel();
+		}
+	}
+
+	/* The edges worth hearing: a session starting and stopping, a rep counted, a level
+	 * reached, and leaving the band while a session runs. */
+	let lastRep = -1;
+	let wasActive = false;
+	let wasInZone = true;
+	let lastLevel = '';
+	$effect(() => {
+		if (!soundOn) {
+			lastRep = state.rep_count;
+			wasActive = state.session_active;
+			wasInZone = state.in_zone;
+			lastLevel = state.level_name;
+			return;
+		}
+		if (state.session_active && !wasActive) {
+			chirp([660, 880]);
+			spoken = '';
+		}
+		if (state.rep_count > lastRep) tone(880, 80);
+		if (state.level_name !== lastLevel) say(state.level_name);
+		if (state.session_active && !state.in_zone && wasInZone) tone(280, 200);
+		if (!state.session_active && wasActive) {
+			chirp([880, 660, 440]);
+			say(state.notice);
+		}
+		lastRep = state.rep_count;
+		wasActive = state.session_active;
+		wasInZone = state.in_zone;
+		lastLevel = state.level_name;
+	});
+
 	onMount(() => {
 		loadState();
 		loadSettings();
@@ -418,6 +502,16 @@
 							: 'hold mode: pick Reps in the settings'}
 					</div>
 				</div>
+			</div>
+
+			<div class="mt-2 flex flex-wrap items-center gap-2">
+				<button class="btn btn-sm {soundOn ? 'btn-success' : 'btn-ghost'}" onclick={toggleSound}>
+					{soundOn ? 'SOUND ON' : 'SOUND OFF'}
+				</button>
+				<span class="label">
+					Confirms come from this phone's speaker: a tick per rep, a chime at the start and
+					end of a set, a low tone when you leave the band, and the level name spoken.
+				</span>
 			</div>
 
 			{#if state.notice}

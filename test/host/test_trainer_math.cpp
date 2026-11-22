@@ -468,6 +468,16 @@ int main()
         expectInt("exactly the minimum travel", ladderBuild(0.0f, 10.0f, 10.0f, lows, highs), 1);
         expectNear("the coverage of six bands of 20 mm", ladderCoverage(6, 0.0f, 20.0f, 137.0f), 120.0f);
         expectNear("coverage never exceeds the travel", ladderCoverage(10, 0.0f, 50.0f, 137.0f), 137.0f);
+
+        /* The Bands slider: the operator asks for a number, the travel has the last word. */
+        expectInt("asking for three bands gets three", ladderBuild(0.0f, 20.0f, 137.0f, lows, highs, 3), 3);
+        expectNear("and the third is where three widths end", highs[2], 60.0f);
+        expectNear("while the fourth stays unused", highs[3], 0.0f);
+        expectInt("asking for one band gets one", ladderBuild(0.0f, 20.0f, 137.0f, lows, highs, 1), 1);
+        expectInt("asking for nine when eight fit gets eight", ladderBuild(0.0f, 20.0f, 137.0f, lows, highs, 9), 6);
+        expectInt("asking for more than the panel holds is capped", ladderBuild(0.0f, 5.0f, 500.0f, lows, highs, 40), kMaxLevels);
+        expectInt("zero means as many as fit", ladderBuild(0.0f, 20.0f, 137.0f, lows, highs, 0), 6);
+        expectInt("and so does a negative request", ladderBuild(0.0f, 20.0f, 137.0f, lows, highs, -3), 6);
     }
 
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);

@@ -64,6 +64,31 @@ ESP32SvelteKit::ESP32SvelteKit(PsychicHttpServer *server, unsigned int numberEnd
 {
 }
 
+/* ------------------------------------------------- the phone's connectivity checks -------
+ * iOS, Android and Windows probe a network before they will call it usable, and this box is a
+ * trainer's access point with no internet behind it. The framework's wildcard DNS responder
+ * sends every one of those probes to this server. Left unanswered they fall through to the page,
+ * which is a 200 with a body the phone does not recognise - so it reports "no internet" and
+ * offers to drop the Wi-Fi or switch to cellular, and mid-play either one kills the page.
+ *
+ * Replying with what each system expects is what stops the offer. Both builds need this: the
+ * embedded front end and the filesystem one, so it is defined once and called from both. */
+static void registerConnectivityChecks(PsychicHttpServer *server)
+{
+    server->on("/hotspot-detect.html", HTTP_GET, [](PsychicRequest *request)
+               { return request->reply(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
+    server->on("/library/test/success.html", HTTP_GET, [](PsychicRequest *request)
+               { return request->reply(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"); });
+    server->on("/generate_204", HTTP_GET, [](PsychicRequest *request)
+               { return request->reply(204); });
+    server->on("/gen_204", HTTP_GET, [](PsychicRequest *request)
+               { return request->reply(204); });
+    server->on("/connecttest.txt", HTTP_GET, [](PsychicRequest *request)
+               { return request->reply(200, "text/plain", "Microsoft Connect Test"); });
+    server->on("/ncsi.txt", HTTP_GET, [](PsychicRequest *request)
+               { return request->reply(200, "text/plain", "Microsoft NCSI"); });
+}
+
 void ESP32SvelteKit::begin()
 {
     ESP_LOGV(SVK_TAG, "Loading settings from files system");
@@ -115,11 +140,16 @@ void ESP32SvelteKit::begin()
                 _server->defaultEndpoint->setHandler(handler);
             }
         });
+
+    /* These must be registered before the default endpoint answers everything else. */
+    registerConnectivityChecks(_server);
 #else
     // Serve static resources from /www/
     ESP_LOGV(SVK_TAG, "Registering routes from FS /www/ static resources");
     _server->serveStatic("/_app/", ESPFS, "/www/_app/");
     _server->serveStatic("/favicon.png", ESPFS, "/www/favicon.png");
+    registerConnectivityChecks(_server);
+
     //  Serving all other get requests with "/www/index.htm"
     _server->onNotFound([](PsychicRequest *request)
                         {
