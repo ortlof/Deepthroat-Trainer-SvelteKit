@@ -129,6 +129,43 @@ struct RepBreak
     }
 };
 
+/* ------------------------------------------------------------- serial console ---- */
+
+/* Base64, for getting a frame crop off a board that is on no network. The serial console is the
+ * only channel when the radio cannot join, and a small crop of RGB565 is a few kB - small enough to
+ * send as text at 115200 in about a second. */
+inline size_t base64Encode(const uint8_t *data, size_t length, char *out, size_t outSize)
+{
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t written = 0;
+    for (size_t i = 0; i < length; i += 3)
+    {
+        const uint32_t b0 = data[i];
+        const uint32_t b1 = (i + 1 < length) ? data[i + 1] : 0;
+        const uint32_t b2 = (i + 2 < length) ? data[i + 2] : 0;
+        const uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
+        const char quad[4] = {
+            table[(triple >> 18) & 0x3Fu],
+            table[(triple >> 12) & 0x3Fu],
+            (i + 1 < length) ? table[(triple >> 6) & 0x3Fu] : '=',
+            (i + 2 < length) ? table[triple & 0x3Fu] : '='};
+        for (int k = 0; k < 4; ++k)
+        {
+            if (written + 1 >= outSize)
+            {
+                out[written] = '\0';
+                return written;
+            }
+            out[written++] = quad[k];
+        }
+    }
+    if (written < outSize)
+    {
+        out[written] = '\0';
+    }
+    return written;
+}
+
 /* --------------------------------------------------------------- colours ---- */
 
 /* The panel takes RGB565 and the web interface's colour pickers speak "#rrggbb", so both

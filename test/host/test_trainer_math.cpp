@@ -538,6 +538,29 @@ int main()
         expectInt("at ten minutes", rest.seconds(100000 + 900000), 600);
     }
 
+    /* ---- base64, for frame crops off a board with no network --------------------- */
+    {
+        char out[32];
+        const uint8_t one[] = {'f'};
+        const uint8_t two[] = {'f', 'o'};
+        const uint8_t three[] = {'f', 'o', 'o'};
+        const uint8_t four[] = {'f', 'o', 'o', 'b'};
+        base64Encode(one, 1, out, sizeof(out));
+        expectInt("one byte encodes with two pads", strcmp(out, "Zg==") == 0 ? 1 : 0, 1);
+        base64Encode(two, 2, out, sizeof(out));
+        expectInt("two bytes encode with one pad", strcmp(out, "Zm8=") == 0 ? 1 : 0, 1);
+        base64Encode(three, 3, out, sizeof(out));
+        expectInt("three bytes encode clean", strcmp(out, "Zm9v") == 0 ? 1 : 0, 1);
+        base64Encode(four, 4, out, sizeof(out));
+        expectInt("four bytes continue", strcmp(out, "Zm9vYg==") == 0 ? 1 : 0, 1);
+        expectInt("empty input gives an empty string", (int)base64Encode(one, 0, out, sizeof(out)), 0);
+        expectInt("and the buffer is terminated", out[0], 0);
+        char small[6];
+        const size_t n = base64Encode(four, 4, small, sizeof(small));
+        expectInt("a short buffer truncates", (int)n <= 5, 1);
+        expectInt("and stays terminated", small[5], 0);
+    }
+
     std::printf("%s: %d checks, %d failures\n", failures == 0 ? "PASS" : "FAIL", checks, failures);
     return failures == 0 ? 0 : 1;
 }

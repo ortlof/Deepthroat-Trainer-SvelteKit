@@ -30,6 +30,7 @@
 
 #include "TrainerConfig.h"
 #include "TrainerDisplay.h"
+#include "TrainerConsole.h"
 #include "TrainerSettingsService.h"
 #include "TrainerStateService.h"
 #include "TrainerTouch.h"
@@ -1699,6 +1700,20 @@ void trainerTask(void *pvParameters)
                  * real reading. */
                 depthRawMm = -1.0f;
             }
+
+            /* The serial console, polled here because this task already holds the live values and
+             * runs often enough to keep up with somebody typing. Costs a look at the port per pass
+             * when nothing arrives. */
+            TrainerConsoleState consoleState;
+            consoleState.levelName = trainer::levelName(lastGoalLevel);
+            consoleState.depthMm = depthMm;
+            consoleState.peakMm = peakMm;
+            consoleState.sessionActive = session.active();
+            consoleState.reps = repCounter.count;
+            consoleState.repTarget = cfg().reps_target;
+            consoleState.repArmed = repCounter.armed;
+            consoleState.breakS = repBreak.seconds(millis());
+            trainerConsole(display, consoleState);
         }
 
         /* A depth is a measurement, not a state. After a moment without a usable
