@@ -175,7 +175,12 @@ private:
 
     Arduino_XL9535SWSPI *_bus = nullptr;
     Arduino_ESP32RGBPanel *_panel = nullptr;
-    Arduino_RGB_Display *_gfx = nullptr;
+    /* The canvas when there is one, which is the normal case, otherwise the panel itself: every
+     * draw call goes through _gfx. _display is the panel underneath, which only the framebuffer
+     * dump needs. */
+    Arduino_GFX *_gfx = nullptr;
+    Arduino_RGB_Display *_display = nullptr;
+    Arduino_Canvas *_canvas = nullptr;
 
     bool _present = false;
     bool _valid = false;

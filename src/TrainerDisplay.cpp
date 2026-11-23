@@ -103,6 +103,23 @@ void TrainerDisplay::setColours(const TrainerColours &colours)
 /* The bounce buffer is given in pixels and must be a multiple of the panel width. */
 #define TRAINER_BOUNCE_PX ((size_t)(TRAINER_TFT_WIDTH * TRAINER_TFT_BOUNCE_LINES))
 
+/* A canvas whose pixels come from PSRAM. Arduino_Canvas::begin() allocates with aligned_alloc,
+ * which on this chip means internal RAM - and a 480x480 frame is 450 kB, far more than fits there.
+ * It only allocates when its own buffer is null, so handing it a PSRAM buffer first is enough, and
+ * if that fails the display keeps drawing straight to the panel the way it always did. */
+class PsramCanvas : public Arduino_Canvas
+{
+public:
+    PsramCanvas(int16_t w, int16_t h, Arduino_G *output) : Arduino_Canvas(w, h, output) {}
+
+    bool reservePsram()
+    {
+        const size_t bytes = (size_t)_width * (size_t)_height * 2u;
+        _framebuffer = (uint16_t *)heap_caps_aligned_alloc(16, bytes, MALLOC_CAP_SPIRAM);
+        return _framebuffer != nullptr;
+    }
+};
+
 static Arduino_ESP32RGBPanel *makePanel(size_t bouncePixels)
 {
     return new Arduino_ESP32RGBPanel(
@@ -134,16 +151,16 @@ static Arduino_RGB_Display *makeDisplay(Arduino_ESP32RGBPanel *panel, Arduino_XL
 #endif
 }
 
-/* The panel's own scanout buffer, as the display object already holds it. Asking the panel for it
- * again would build a second panel configuration and a second framebuffer, which is why this goes
- * through the accessor the display class already exposes. */
+/* The panel's own scanout buffer. With the canvas in place this holds the last frame pushed to the
+ * panel, which is what the dump wants: the canvas is what the drawing goes into, the panel is what
+ * the glass is actually showing. */
 uint16_t *TrainerDisplay::frameBuffer()
 {
-    if (_gfx == nullptr)
+    if (_display == nullptr)
     {
         return nullptr;
     }
-    return static_cast<Arduino_RGB_Display *>(_gfx)->getFramebuffer();
+    return _display->getFramebuffer();
 }
 
 bool TrainerDisplay::begin()
@@ -157,8 +174,9 @@ bool TrainerDisplay::begin()
                                    TRAINER_XL9535_PIN_SCLK, TRAINER_XL9535_PIN_MOSI);
 
     _panel = makePanel(TRAINER_BOUNCE_PX);
-    _gfx = makeDisplay(_panel, _bus);
-    _present = _gfx->begin();
+    _display = makeDisplay(_panel, _bus);
+    _gfx = _display;
+    _present = _display->begin();
 
     if (!_present && TRAINER_TFT_BOUNCE_LINES > 0)
     {
@@ -168,13 +186,33 @@ bool TrainerDisplay::begin()
          * built display is a bigger risk than losing a few hundred bytes. */
         Serial.println("[display] panel refused the bounce buffer, retrying without it");
         _panel = makePanel(0);
-        _gfx = makeDisplay(_panel, _bus);
-        _present = _gfx->begin();
+        _display = makeDisplay(_panel, _bus);
+        _gfx = _display;
+        _present = _display->begin();
     }
     if (!_present)
     {
         Serial.println("[display] panel did not start");
         return false;
+    }
+
+    /* Compose the frame in PSRAM and push it to the panel in one transfer. The panel's own buffer
+     * is then only ever written by that push, never by a half drawn frame - which is what the one
+     * pixel stripes were - and nothing survives between frames, so nothing has to be erased by
+     * hand either. If there is no room for the buffer, drawing goes straight to the panel. */
+    PsramCanvas *canvas = new PsramCanvas(TRAINER_TFT_WIDTH, TRAINER_TFT_HEIGHT, _display);
+    if (canvas != nullptr && canvas->reservePsram() && canvas->begin(GFX_SKIP_OUTPUT_BEGIN))
+    {
+        _canvas = canvas;
+        _gfx = canvas;
+        Serial.printf("[display] canvas %dx%d in PSRAM (%u kB): frames are composed, then pushed\n",
+                      TRAINER_TFT_WIDTH, TRAINER_TFT_HEIGHT,
+                      (unsigned)((size_t)TRAINER_TFT_WIDTH * TRAINER_TFT_HEIGHT * 2u / 1024u));
+    }
+    else
+    {
+        Serial.println("[display] no canvas in PSRAM, drawing straight to the panel");
+        _canvas = nullptr;
     }
 
     _gfx->fillScreen(COL_BG);
@@ -940,11 +978,11 @@ void TrainerDisplay::render(const TrainerScreen &screen)
         _valid = false;
     }
 
-    if (!_valid)
-    {
-        drawStatic();
-        _valid = true;
-    }
+    /* Every frame is composed from scratch in the canvas. The panel therefore never shows a half
+     * drawn frame, and no erase can leave anything behind: the clear and the redraw both happen in
+     * PSRAM, one after the other, before anything reaches the glass. */
+    drawStatic();
+    _valid = true;
 
     /* An animation owns the whole panel while it runs. It ends on its own clock, and
      * when it does, the static frame and every text box are drawn again from scratch:
