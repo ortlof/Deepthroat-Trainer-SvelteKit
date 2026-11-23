@@ -953,7 +953,7 @@ static void buildSnapshot()
     /* Rep mode: the count replaces the level name on the panel. */
     screen.repMode = playModeReps();
     screen.repCount = repCounter.count;
-    screen.repBreakS = repBreak.seconds(millis());
+    screen.repBreakS = repBreak.left(millis(), cfg().break_seconds);
     screen.repTarget = cfg().reps_target;
 
     /* The panel menu. Its own flag and notice come from this task; the mode and the level
@@ -1086,7 +1086,7 @@ static void publishState()
         if (state.repTarget != cfg().reps_target) { state.repTarget = cfg().reps_target; changed = true; }
         if (state.repCount != repCounter.count) { state.repCount = repCounter.count; changed = true; }
         if (state.repArmed != repCounter.armed) { state.repArmed = repCounter.armed; changed = true; }
-        const uint16_t restSeconds = repBreak.seconds(millis());
+        const uint16_t restSeconds = repBreak.left(millis(), cfg().break_seconds);
         if (state.repBreakS != restSeconds) { state.repBreakS = restSeconds; changed = true; }
         if (fabsf(state.lastSessionPeakMm - lastSession.peakMm) >= 0.5f) { state.lastSessionPeakMm = lastSession.peakMm; changed = true; }
         if (fabsf(state.lastSessionAvgMm - lastSession.averageMm()) >= 0.5f) { state.lastSessionAvgMm = lastSession.averageMm(); changed = true; }
@@ -1688,9 +1688,11 @@ void trainerTask(void *pvParameters)
                 {
                     repCounter.release(depthMm, TRAINER_REP_RELEASE_MM);
                 }
-                /* The rest between reps: it runs while the next rep is armed and at least one rep
-                 * is done, which is exactly the pause the operator is taking. */
-                repBreak.update(playModeReps() && repCounter.armed, session.active(), repCounter.count,
+                /* The rest between reps: it runs while the depth is settled at or under the
+                 * configured break depth and at least one rep is done, which is the pause the
+                 * operator is taking. It counts down, so the panel can say how long is left. */
+                const bool settled = depthMm <= cfg().break_depth_mm;
+                repBreak.update(settled, session.active(), repCounter.count, cfg().break_seconds,
                                 millis());
             }
             else
@@ -1712,7 +1714,7 @@ void trainerTask(void *pvParameters)
             consoleState.reps = repCounter.count;
             consoleState.repTarget = cfg().reps_target;
             consoleState.repArmed = repCounter.armed;
-            consoleState.breakS = repBreak.seconds(millis());
+            consoleState.breakS = repBreak.left(millis(), cfg().break_seconds);
             trainerConsole(display, consoleState);
         }
 
@@ -1734,6 +1736,16 @@ void trainerTask(void *pvParameters)
         {
             setNotice("session ended: nothing in front of the sensor");
             stopSession();
+        }
+
+        /* The break ran out with the head still settled at the start. That is the set over,
+         * finished by the clock rather than by anybody deciding to stop - which is the point of
+         * having a rest in the first place. */
+        if (repBreak.expired(millis(), cfg().break_seconds))
+        {
+            setNotice("break over - set finished");
+            stopSession();
+            repBreak.reset();
         }
 
         handleTouch();

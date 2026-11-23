@@ -98,6 +98,14 @@ public:
     char colour_dim[8] = "#9c9d9c";
     char colour_warn[8] = "#ff0000";
 
+    /* The rest between reps: how long it is, and how far out counts as out.
+     *
+     * Zero seconds means the break is off, which is how it shipped and how it stays unless it is
+     * asked for. The depth is a settle threshold rather than a full return, so a break can be a
+     * partial pull-back instead of all the way home. */
+    float break_seconds = 0.0f;
+    float break_depth_mm = 8.0f;
+
     /* Where the visible round window sits inside the 480x480 framebuffer. Measured from a
      * video of this board: the window is about 15 px left and 9 px above the middle of the
      * framebuffer, which is easy to see on a ring this close to the edge. Nudge it until
@@ -157,6 +165,8 @@ public:
         root["display_brightness"] = settings.display_brightness;
         root["dim_brightness"] = settings.dim_brightness;
         root["display_timeout_s"] = settings.display_timeout_s;
+        root["break_seconds"] = settings.break_seconds;
+        root["break_depth_mm"] = settings.break_depth_mm;
         root["panel_centre_x"] = settings.panel_centre_x;
         root["panel_centre_y"] = settings.panel_centre_y;
 
@@ -280,6 +290,14 @@ public:
         int timeout = root["display_timeout_s"] | (int)settings.display_timeout_s;
         timeout = constrain(timeout, 0, 3600);
 
+        /* The rest between reps, and how far out counts as out. Both are the operator's numbers:
+         * the rest is what a set is paced by, and the depth is what makes a break possible without
+         * a full return in a cage that does not have the room. */
+        float breakSeconds = root["break_seconds"] | settings.break_seconds;
+        breakSeconds = constrain(breakSeconds, 0.0f, 600.0f);
+        float breakDepthMm = root["break_depth_mm"] | settings.break_depth_mm;
+        breakDepthMm = constrain(breakDepthMm, 0.0f, 200.0f);
+
         /* the palette: one loop, so ten colours need one copy of the same six lines */
         ColourField colourFields[] = {
             {"colour_bg", settings.colour_bg, sizeof(settings.colour_bg)},
@@ -367,6 +385,8 @@ public:
             dim == (int)settings.dim_brightness && timeout == (int)settings.display_timeout_s &&
             centreX == (int)settings.panel_centre_x && centreY == (int)settings.panel_centre_y &&
             !ladderChanged && !coloursChanged &&
+            fabsf(breakSeconds - settings.break_seconds) < 0.01f &&
+            fabsf(breakDepthMm - settings.break_depth_mm) < 0.01f &&
             strcmp(praise, settings.praise) == 0)
         {
             return StateUpdateResult::UNCHANGED;
@@ -392,6 +412,8 @@ public:
         settings.display_brightness = (uint8_t)brightness;
         settings.dim_brightness = (uint8_t)dim;
         settings.display_timeout_s = (uint16_t)timeout;
+        settings.break_seconds = breakSeconds;
+        settings.break_depth_mm = breakDepthMm;
         settings.panel_centre_x = (int16_t)centreX;
         settings.panel_centre_y = (int16_t)centreY;
         settings.ladder_base = ladderBase;

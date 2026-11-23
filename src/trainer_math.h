@@ -82,21 +82,25 @@ struct RepCount
 
 /* ------------------------------------------------------------- rep break ---- */
 
-/* The rest between reps. It starts the moment the depth is fully out and the next rep is armed,
- * and ends the moment that rep counts - so it measures exactly the pause the operator took, which
- * is what makes it useful: a rest held for a known number of seconds instead of guessed at. Basti
- * asked for it in as many words: "we need a break time counter when fully out". */
+/* The rest between reps, counted down rather than up.
+ *
+ * Basti asked for it in these terms: the break is configured in the game menu, it counts down in
+ * place, the set ends if he never comes back from it, and the depth that counts as "out" is
+ * configurable so a break does not have to be a full return.
+ *
+ * So a break runs while the depth is at or under breakDepthMm and the next rep is armed. It ends
+ * two ways: the depth goes back past that line, which is the operator starting the next rep, or the
+ * configured rest runs out - and running out is how a set finishes without anybody deciding to. */
 struct RepBreak
 {
     bool running = false;
     uint32_t startedMs = 0;
 
-    /* Called on every pass with whether the next rep is armed and how many reps are done. A break
-     * only exists between reps, so the count of zero - standing at the start of a set - is not one.
-     * Returns true on the pass where a break begins. */
-    bool update(bool armed, bool sessionActive, uint16_t repsDone, uint32_t nowMs)
+    /* Call every pass. Returns true on the pass where a break begins. A rest of zero means the
+     * feature is off, and nothing ever runs. */
+    bool update(bool settled, bool sessionActive, uint16_t repsDone, float restSeconds, uint32_t nowMs)
     {
-        const bool shouldRun = armed && sessionActive && repsDone > 0;
+        const bool shouldRun = settled && sessionActive && repsDone > 0 && restSeconds > 0.0f;
         if (shouldRun && !running)
         {
             running = true;
@@ -116,16 +120,27 @@ struct RepBreak
         startedMs = 0;
     }
 
-    uint16_t seconds(uint32_t nowMs) const
+    /* Seconds left of the rest, for a countdown. Zero when nothing is running. */
+    uint16_t left(uint32_t nowMs, float restSeconds) const
     {
-        if (!running || nowMs < startedMs)
+        if (!running || restSeconds <= 0.0f)
         {
             return 0;
         }
-        const uint32_t elapsed = nowMs - startedMs;
-        /* A rest longer than ten minutes is somebody who walked away, not a rest. Capping keeps
-         * the readout a sane width instead of letting it grow into other things. */
-        return (elapsed > 600000u) ? 600u : (uint16_t)(elapsed / 1000u);
+        const uint32_t elapsedMs = (nowMs >= startedMs) ? (nowMs - startedMs) : 0;
+        const uint32_t totalMs = (uint32_t)(restSeconds * 1000.0f);
+        if (elapsedMs >= totalMs)
+        {
+            return 0;
+        }
+        /* Round up, so the last second still shows as 1 rather than disappearing early. */
+        return (uint16_t)((totalMs - elapsedMs + 999u) / 1000u);
+    }
+
+    /* True when the rest has run out and the operator has still not moved. */
+    bool expired(uint32_t nowMs, float restSeconds) const
+    {
+        return running && restSeconds > 0.0f && left(nowMs, restSeconds) == 0;
     }
 };
 

@@ -16,6 +16,8 @@
 		level_count_down: boolean;
 		play_mode: number;
 		reps_target: number;
+		break_seconds: number;
+		break_depth_mm: number;
 		praise: string;
 		session_stop_s: number;
 		[key: string]: number | boolean | string;
@@ -41,6 +43,8 @@
 		level_count_down: false,
 		play_mode: 0,
 		reps_target: 5,
+		break_seconds: 0,
+		break_depth_mm: 8,
 		praise: 'GOOD THING',
 		session_stop_s: 8
 	});
@@ -603,6 +607,48 @@
 			<div class="label">
 				0 counts up without a target. A number counts down from it, and a set ends when it is done.
 				{state.session_active ? ' Running: ' + state.rep_count + ' done, ' + state.reps_left + ' to go.' : ''}
+			</div>
+		</div>
+
+		<div class="fieldset">
+			<label class="label" for="breakseconds">
+				Rest between reps ({settings.break_seconds === 0 ? 'off' : settings.break_seconds + ' s, counting down'})
+			</label>
+			<input
+				id="breakseconds"
+				type="range"
+				class="range range-primary"
+				min="0"
+				max="120"
+				step="5"
+				bind:value={settings.break_seconds}
+				onchange={() => saveSettings({ break_seconds: Number(settings.break_seconds) })}
+			/>
+			<div class="label">
+				The rest counts down on the panel where the depth number sits, and the depth drops to the line
+				below it for the duration. If the rest runs out with nothing moving, the set finishes by itself.
+				0 turns the break off.
+			</div>
+		</div>
+
+		<div class="fieldset">
+			<label class="label" for="breakdepth">
+				Out enough to rest ({settings.break_depth_mm} mm)
+			</label>
+			<input
+				id="breakdepth"
+				type="range"
+				class="range range-primary"
+				min="0"
+				max="60"
+				step="1"
+				bind:value={settings.break_depth_mm}
+				onchange={() => saveSettings({ break_depth_mm: Number(settings.break_depth_mm) })}
+			/>
+			<div class="label">
+				A rest begins when the depth comes back to this or shallower, so a break does not have to be a
+				full return - useful when the cage does not have the room for one. The next rep can start from
+				anywhere past it.
 			</div>
 		</div>
 

@@ -415,7 +415,14 @@ void TrainerDisplay::drawReadout(const TrainerScreen &screen)
     char buffer[24];
     const float value = (screen.unit == 1) ? (screen.depthMm / 10.0f)
                                            : ((screen.unit == 2) ? (screen.depthMm / 25.4f) : screen.depthMm);
-    if (screen.unit == 0)
+    if (screen.repBreakS > 0)
+    {
+        /* Counting down where the depth number normally sits. During a rest the thing being
+         * watched is the clock, and the depth is not moving anyway - so the big number changes
+         * job and the depth drops to the line below. */
+        snprintf(buffer, sizeof(buffer), "%u", (unsigned)screen.repBreakS);
+    }
+    else if (screen.unit == 0)
     {
         snprintf(buffer, sizeof(buffer), "%d", (int)lroundf(value));
     }
@@ -567,7 +574,14 @@ void TrainerDisplay::drawBattery(bool known, float volts)
 void TrainerDisplay::drawSessionLine(const TrainerScreen &screen)
 {
     char buffer[56];
-    if (!screen.sessionActive)
+    if (screen.repBreakS > 0)
+    {
+        /* The depth comes down here while the rest counts down above, so the number that stopped
+         * mattering gives up the big spot to the one that does. */
+        snprintf(buffer, sizeof(buffer), "BREAK - %d mm  rep %u/%u", (int)lroundf(screen.depthMm),
+                 (unsigned)screen.repCount, (unsigned)screen.repTarget);
+    }
+    else if (!screen.sessionActive)
     {
         snprintf(buffer, sizeof(buffer), "tap to start a session");
     }
@@ -589,7 +603,7 @@ void TrainerDisplay::drawSessionLine(const TrainerScreen &screen)
 
     if (_lastSessionLine != buffer)
     {
-        uint16_t color = screen.holdComplete ? COL_ZONE : COL_DIM;
+        uint16_t color = screen.repBreakS > 0 ? COL_GOAL : (screen.holdComplete ? COL_ZONE : COL_DIM);
         const int16_t halfHeight = (int16_t)pgm_read_byte(&FreeSans9pt7b.yAdvance) / 2 + 3;
         eraseBox(CX, SESSION_CY, _lastSessionWidth / 2 + 6, halfHeight);
         _lastSessionLine = buffer;

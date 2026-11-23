@@ -512,30 +512,38 @@ int main()
     /* ---- the rest between reps -------------------------------------------------- */
     {
         RepBreak rest;
-        expectInt("nothing runs before a rep", rest.seconds(1000), 0);
-        expectInt("and no break starts with no reps done", rest.update(true, true, 0, 1000) ? 1 : 0, 0);
+        const float rest_s = 30.0f;
+        expectInt("nothing runs before a rep", rest.left(1000, rest_s), 0);
+        expectInt("and no break starts with no reps done", rest.update(true, true, 0, rest_s, 1000) ? 1 : 0, 0);
         expectInt("standing at the start is not a break", rest.running ? 1 : 0, 0);
+        expectInt("nor with the rest set to zero", rest.update(true, true, 1, 0.0f, 1000) ? 1 : 0, 0);
 
-        expectInt("a break starts once a rep is done and we are back out", rest.update(true, true, 1, 5000) ? 1 : 0, 1);
+        expectInt("a break starts once a rep is done and we are back out",
+                  rest.update(true, true, 1, rest_s, 5000) ? 1 : 0, 1);
         expectInt("and it is running", rest.running ? 1 : 0, 1);
-        expectInt("immediately it reads zero", rest.seconds(5000), 0);
-        expectInt("after one second it reads one", rest.seconds(6000), 1);
-        expectInt("and it keeps counting", rest.seconds(12500), 7);
-        expectInt("no second start while it runs", rest.update(true, true, 1, 7000) ? 1 : 0, 0);
-        expectInt("and the clock is not restarted", rest.seconds(9000), 4);
+        expectInt("it counts down from the configured rest", rest.left(5000, rest_s), 30);
+        expectInt("after a second, 29 left", rest.left(6000, rest_s), 29);
+        expectInt("after ten, 20 left", rest.left(15000, rest_s), 20);
+        expectInt("the last second still reads one", rest.left(34000, rest_s), 1);
+        expectInt("and at the end it reads zero", rest.left(35000, rest_s), 0);
+        expectInt("but it is not expired before then", rest.expired(34000, rest_s) ? 1 : 0, 0);
+        expectInt("it expires when the rest runs out", rest.expired(35000, rest_s) ? 1 : 0, 1);
+        expectInt("and stays expired", rest.expired(60000, rest_s) ? 1 : 0, 1);
 
-        expectInt("the next rep ends it", rest.update(false, true, 2, 10000) ? 1 : 0, 0);
-        expectInt("so it reads zero again", rest.seconds(10000), 0);
-        expectInt("and stays stopped", rest.seconds(30000), 0);
+        expectInt("moving again ends it", rest.update(false, true, 2, rest_s, 40000) ? 1 : 0, 0);
+        expectInt("so nothing is left", rest.left(40000, rest_s), 0);
+        expectInt("and it is not expired", rest.expired(40000, rest_s) ? 1 : 0, 0);
 
-        expectInt("a later arming starts a fresh break", rest.update(true, true, 2, 40000) ? 1 : 0, 1);
-        expectInt("which counts from there", rest.seconds(43000), 3);
+        expectInt("a later break starts fresh", rest.update(true, true, 2, rest_s, 50000) ? 1 : 0, 1);
+        expectInt("counting from the full rest again", rest.left(50000, rest_s), 30);
 
-        expectInt("ending the session stops it", rest.update(true, false, 2, 44000) ? 1 : 0, 0);
-        expectInt("and reads zero", rest.seconds(45000), 0);
+        expectInt("ending the session stops it", rest.update(true, false, 2, rest_s, 51000) ? 1 : 0, 0);
+        expectInt("and reads zero", rest.left(51000, rest_s), 0);
 
-        expectInt("a long absence is capped", rest.update(true, true, 3, 100000) ? 1 : 0, 1);
-        expectInt("at ten minutes", rest.seconds(100000 + 900000), 600);
+        const float shortRest = 5.0f;
+        expectInt("a short rest starts too", rest.update(true, true, 3, shortRest, 1000) ? 1 : 0, 1);
+        expectInt("and counts its own length", rest.left(1000, shortRest), 5);
+        expectInt("expiring at five seconds", rest.expired(6000, shortRest) ? 1 : 0, 1);
     }
 
     /* ---- base64, for frame crops off a board with no network --------------------- */
