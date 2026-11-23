@@ -21,6 +21,10 @@
 #include "TrainerDisplay.h"
 #include "trainer_math.h"
 
+/* Set by the serial console when it is asked to press the menu chip. The trainer task owns the
+ * state, so the console only raises this and the task presses it - the same path a finger takes. */
+static volatile bool g_consoleMenuPress = false;
+
 struct TrainerConsoleState
 {
     const char *levelName = "";
@@ -126,6 +130,13 @@ inline void trainerConsole(TrainerDisplay &display, const TrainerConsoleState &s
         {
             printStateLine(display, state);
         }
+        else if (line[0] == 'm')
+        {
+            /* The same press a finger makes on the menu chip, so the panel can be driven from
+             * here when the board has no network and nobody is standing in front of it. */
+            g_consoleMenuPress = true;
+            Serial.println("menu press requested");
+        }
         else if (line[0] == 'f')
         {
             int cx = 0;
@@ -143,7 +154,7 @@ inline void trainerConsole(TrainerDisplay &display, const TrainerConsoleState &s
         }
         else if (line[0] == 'h')
         {
-            Serial.println("s = state, f x y w h = panel crop as base64");
+            Serial.println("s = state, m = press the menu chip, f x y w h = panel crop as base64");
         }
         else if (line[0] != '\0')
         {

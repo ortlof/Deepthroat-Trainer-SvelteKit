@@ -1750,6 +1750,14 @@ void trainerTask(void *pvParameters)
 
         handleTouch();
 
+        /* A menu press asked for over the serial console: the console only raises the flag, and
+         * the press happens here, in the task that owns the state. */
+        if (g_consoleMenuPress)
+        {
+            g_consoleMenuPress = false;
+            pressMenuChip();
+        }
+
         if ((millis() - lastStatePushMs) >= STATE_PUSH_INTERVAL_MS)
         {
             lastStatePushMs = millis();

@@ -805,7 +805,15 @@ void TrainerDisplay::drawMenu(const TrainerScreen &screen, uint32_t nowMs)
 {
     (void)nowMs;
 
-    if (!_menuDrawn)
+    /* Drawn every frame, with no guard.
+     *
+     * The guard that used to live here was correct while erases were cached: it stopped the menu
+     * being repainted unnecessarily. The canvas changed the rule - render() now calls drawStatic()
+     * on every frame, which wipes the canvas - so "drawn once" means "drawn once and then wiped".
+     * The result was a black screen with the main frame's big number still on the glass, which is
+     * the whole of the bug Basti reported.
+     *
+     * The calibration guide below learned this first and kept its fix. The menu did not. */
     {
         _gfx->fillScreen(COL_BG);
         drawCentered(&FreeSansBold12pt7b, 1, CX, CY - 148, "MENU", COL_TEXT);
